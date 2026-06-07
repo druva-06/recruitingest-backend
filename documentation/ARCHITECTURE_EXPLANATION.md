@@ -60,3 +60,18 @@ github.com/druva-06/recruitingest-backend
     Wrapped the batching loop in an explicit `db.BeginTx()` transaction. If *any* batch fails, `tx.Rollback()` drops the incomplete data. If all succeed, `tx.Commit()` seals it. 
 *   **Row Tracking:**
     The system reads `RowsAffected()` from the driver. Even if 1,000 recruiters were found in the PDF, if 900 were duplicates, it accurately logs: `"Extracted 1000 contacts, inserted 100 new unique records."`
+
+## Phase 5: Client-Provided Credentials & Search Pagination
+**Goal:** Empower users to configure their own Gemini API keys securely and navigate large contact databases efficiently.
+
+*   **Secure Client-side Credential Storage (`src/utils/secureStorage.js`):**
+    *   **Cryptographic Encryption:** Sensitive API keys are encrypted client-side using `AES-GCM` 256.
+    *   **IndexedDB Key Ring:** Decryption keys are stored locally inside `IndexedDB` with the `extractable` flag set to `false`. This prevents malicious browser extensions or XSS payloads from extracting the raw encryption key material.
+    *   **Dynamic Headers:** The frontend decrypts the API key and sends it to the backend via the `X-Gemini-API-Key` and `X-Gemini-Model` request headers.
+*   **Dynamic Backend Configuration (`config/config.go`, `internal/api/handler.go`):**
+    *   **CORS Allowlist:** Extended `Access-Control-Allow-Headers` in `cors.go` to accept the custom `X-Gemini-*` headers.
+    *   **Decoupled Startup:** Made `GEMINI_API_KEY` optional in `.env` so the server can boot up without a shared key, dynamically resolving keys from client requests.
+*   **Recruiter Search Pagination (`internal/repository/db.go`, `internal/api/recruiter_handler.go`):**
+    *   **Counting Query:** Executes a high-performance `SELECT COUNT(*)` query to fetch the total count of matches matching the search parameters.
+    *   **Limit & Offset:** Computes the DB query offset using `(page - 1) * limit` and appends `LIMIT ? OFFSET ?` to the SQL query statement.
+    *   **Standard Metadata:** Returns search results alongside pagination metadata: `total`, `page`, and `limit`.

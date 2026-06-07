@@ -16,7 +16,7 @@ import (
 )
 
 // ProcessPDFWorker handles the async extraction, chunking, LLM processing, and database persistence.
-func ProcessPDFWorker(jobID, filePath string, cfg *config.Config, db *sql.DB) {
+func ProcessPDFWorker(jobID, filePath string, apiKey, modelName string, cfg *config.Config, db *sql.DB) {
 	// CRITICAL PRODUCTION GUARDRAIL: Recover from panics to keep main server online.
 	defer func() {
 		if r := recover(); r != nil {
@@ -47,7 +47,7 @@ func ProcessPDFWorker(jobID, filePath string, cfg *config.Config, db *sql.DB) {
 	_ = repository.SetJobTotalChunks(ctx, db, jobID, len(chunks))
 
 	// 3. LLM Integration
-	llmSvc, err := llm.NewGeminiService(ctx, cfg.GeminiAPIKey, cfg.GeminiModel)
+	llmSvc, err := llm.NewGeminiService(ctx, apiKey, modelName)
 	if err != nil {
 		log.Printf("[Worker] Failed to initialize LLM service for Job %s: %v\n", jobID, err)
 		_ = repository.UpdateJobStatus(ctx, db, jobID, "failed")

@@ -36,12 +36,12 @@ func Load() *Config {
 
 	apiKey := os.Getenv("GEMINI_API_KEY")
 	if apiKey == "" {
-		log.Fatal("[CRITICAL] Missing required environment variable: GEMINI_API_KEY")
+		log.Println("[INFO] GEMINI_API_KEY environment variable is not set. API key must be provided by frontend request headers.")
 	}
 
 	model := os.Getenv("GEMINI_MODEL")
 	if model == "" {
-		model = "gemini-1.5-flash" // default fallback
+		model = "gemini-3.5-flash" // default fallback
 	}
 
 	allowedOrigin := os.Getenv("CORS_ALLOWED_ORIGIN")

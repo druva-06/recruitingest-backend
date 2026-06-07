@@ -152,16 +152,24 @@ curl http://localhost:8080/api/v1/jobs/a1b2c3d4-e5f6-7890-abcd-ef1234567890
 ```
 *(Status will transition from `pending` -> `processing` -> `completed` or `failed`)*
 
-### Search Recruiters
+### Search Recruiters & Pagination
 
-Search across names, titles, companies, and email addresses:
+Search across names, titles, companies, and email addresses with built-in pagination support:
 
 ```bash
-curl "http://localhost:8080/api/v1/recruiters?q=gmail.com&company=Acme"
+curl "http://localhost:8080/api/v1/recruiters?q=gmail.com&company=Acme&page=1&limit=20"
 ```
 
-Dedicated `company`, `email`, and optional `limit` query parameters are also
-supported. Results are ordered newest first and limited to 100 records.
+The endpoint accepts optional `page` (default `1`) and `limit` (default `50`, max `100`) query parameters, returning results alongside pagination metadata:
+
+```json
+{
+  "recruiters": [...],
+  "total": 45,
+  "page": 1,
+  "limit": 20
+}
+```
 
 ### Add a Recruiter Manually
 

@@ -16,7 +16,9 @@ import (
 
 type recruiterListResponse struct {
 	Recruiters []models.RecruiterRecord `json:"recruiters"`
-	Count      int                      `json:"count"`
+	Total      int                      `json:"total"`
+	Page       int                      `json:"page"`
+	Limit      int                      `json:"limit"`
 }
 
 // NewRecruiterHandler supports manual creation and flexible recruiter search.
@@ -42,13 +44,21 @@ func searchRecruiters(w http.ResponseWriter, r *http.Request, db *sql.DB) {
 		limit = requestedLimit
 	}
 
-	recruiters, err := repository.SearchRecruiters(
+	page := 1
+	if requestedPage, err := strconv.Atoi(r.URL.Query().Get("page")); err == nil && requestedPage > 0 {
+		page = requestedPage
+	}
+
+	offset := (page - 1) * limit
+
+	recruiters, total, err := repository.SearchRecruiters(
 		r.Context(),
 		db,
 		strings.TrimSpace(r.URL.Query().Get("q")),
 		strings.TrimSpace(r.URL.Query().Get("company")),
 		strings.TrimSpace(r.URL.Query().Get("email")),
 		limit,
+		offset,
 	)
 	if err != nil {
 		writeJSONError(w, http.StatusInternalServerError, "Failed to search recruiters")
@@ -56,7 +66,12 @@ func searchRecruiters(w http.ResponseWriter, r *http.Request, db *sql.DB) {
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(recruiterListResponse{Recruiters: recruiters, Count: len(recruiters)})
+	json.NewEncoder(w).Encode(recruiterListResponse{
+		Recruiters: recruiters,
+		Total:      total,
+		Page:       page,
+		Limit:      limit,
+	})
 }
 
 func createRecruiter(w http.ResponseWriter, r *http.Request, db *sql.DB) {

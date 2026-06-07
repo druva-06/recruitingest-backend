@@ -118,7 +118,7 @@ func GetRecruiterByID(ctx context.Context, db *sql.DB, id int64) (*models.Recrui
 }
 
 // SearchRecruiters finds recruiters using optional field filters and a general query.
-func SearchRecruiters(ctx context.Context, db *sql.DB, query, company, email string, limit int) ([]models.RecruiterRecord, error) {
+func SearchRecruiters(ctx context.Context, db *sql.DB, query, company, email string, limit, offset int) ([]models.RecruiterRecord, int, error) {
 	conditions := make([]string, 0, 3)
 	args := make([]interface{}, 0, 8)
 
@@ -136,16 +136,29 @@ func SearchRecruiters(ctx context.Context, db *sql.DB, query, company, email str
 		args = append(args, "%"+email+"%")
 	}
 
+	// 1. Get the total matching count for pagination
+	countStatement := "SELECT COUNT(*) FROM recruiters"
+	if len(conditions) > 0 {
+		countStatement += " WHERE " + strings.Join(conditions, " AND ")
+	}
+	
+	var totalCount int
+	err := db.QueryRowContext(ctx, countStatement, args...).Scan(&totalCount)
+	if err != nil {
+		return nil, 0, fmt.Errorf("failed to count recruiters: %w", err)
+	}
+
+	// 2. Query the actual paginated records
 	statement := "SELECT id, recruiter_name, COALESCE(recruiter_title, ''), recruiter_email, COALESCE(company_name, ''), COALESCE(source_file, ''), created_at FROM recruiters"
 	if len(conditions) > 0 {
 		statement += " WHERE " + strings.Join(conditions, " AND ")
 	}
-	statement += " ORDER BY created_at DESC, id DESC LIMIT ?"
-	args = append(args, limit)
+	statement += " ORDER BY created_at DESC, id DESC LIMIT ? OFFSET ?"
+	args = append(args, limit, offset)
 
 	rows, err := db.QueryContext(ctx, statement, args...)
 	if err != nil {
-		return nil, fmt.Errorf("failed to search recruiters: %w", err)
+		return nil, 0, fmt.Errorf("failed to search recruiters: %w", err)
 	}
 	defer rows.Close()
 
@@ -161,13 +174,13 @@ func SearchRecruiters(ctx context.Context, db *sql.DB, query, company, email str
 			&recruiter.SourceFile,
 			&recruiter.CreatedAt,
 		); err != nil {
-			return nil, fmt.Errorf("failed to scan recruiter: %w", err)
+			return nil, 0, fmt.Errorf("failed to scan recruiter: %w", err)
 		}
 		recruiters = append(recruiters, recruiter)
 	}
 
 	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("failed while reading recruiters: %w", err)
+		return nil, 0, fmt.Errorf("failed while reading recruiters: %w", err)
 	}
-	return recruiters, nil
+	return recruiters, totalCount, nil
 }

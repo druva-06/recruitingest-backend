@@ -106,8 +106,26 @@ func NewUploadHandler(cfg *config.Config, db *sql.DB) http.HandlerFunc {
 			return
 		}
 
-		// 5. Instantly trigger background worker via Goroutine, passing down config and DB
-		go worker.ProcessPDFWorker(jobID, destPath, cfg, db)
+		// Resolve Gemini API key and model (from header, fallback to backend config)
+		reqAPIKey := r.Header.Get("X-Gemini-API-Key")
+		if reqAPIKey == "" {
+			reqAPIKey = cfg.GeminiAPIKey
+		}
+		if reqAPIKey == "" {
+			writeJSONError(w, http.StatusBadRequest, "Gemini API key is required. Please set it in Settings.")
+			return
+		}
+
+		reqModel := r.Header.Get("X-Gemini-Model")
+		if reqModel == "" {
+			reqModel = cfg.GeminiModel
+		}
+		if reqModel == "" {
+			reqModel = "gemini-3.5-flash"
+		}
+
+		// 5. Instantly trigger background worker via Goroutine, passing down keys, config, and DB
+		go worker.ProcessPDFWorker(jobID, destPath, reqAPIKey, reqModel, cfg, db)
 
 		// 6. Return 202 Accepted immediately
 		w.Header().Set("Content-Type", "application/json")
