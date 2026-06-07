@@ -13,10 +13,11 @@ import (
 	"github.com/druva-06/recruitingest-backend/internal/parser"
 	"github.com/druva-06/recruitingest-backend/internal/pdfparser"
 	"github.com/druva-06/recruitingest-backend/internal/repository"
+	"golang.org/x/time/rate"
 )
 
 // ProcessPDFWorker handles the async extraction, chunking, LLM processing, and database persistence.
-func ProcessPDFWorker(jobID, filePath string, apiKey, modelName string, cfg *config.Config, db *sql.DB) {
+func ProcessPDFWorker(jobID, filePath string, apiKey, modelName string, rateLimitRequests, rateLimitInterval int, cfg *config.Config, db *sql.DB) {
 	// CRITICAL PRODUCTION GUARDRAIL: Recover from panics to keep main server online.
 	defer func() {
 		if r := recover(); r != nil {
@@ -55,9 +56,26 @@ func ProcessPDFWorker(jobID, filePath string, apiKey, modelName string, cfg *con
 	}
 	defer llmSvc.Close()
 
+	// Initialize rate limiter if configured
+	var limiter *rate.Limiter
+	if rateLimitRequests > 0 && rateLimitInterval > 0 {
+		limit := rate.Limit(float64(rateLimitRequests) / float64(rateLimitInterval))
+		limiter = rate.NewLimiter(limit, rateLimitRequests)
+		log.Printf("[Worker] Job %s using rate limiter: %d requests per %ds (limit: %f/sec)\n", 
+			jobID, rateLimitRequests, rateLimitInterval, float64(limit))
+	}
+
 	var allRecruiters []models.Recruiter
 	for i, chunk := range chunks {
 		log.Printf("[Worker] Job %s processing chunk %d/%d...\n", jobID, i+1, len(chunks))
+
+		// Wait for rate limiter if active
+		if limiter != nil {
+			log.Printf("[Worker] Job %s waiting for rate limiter token...\n", jobID)
+			if err := limiter.Wait(ctx); err != nil {
+				log.Printf("[Worker] Job %s rate limiter error: %v\n", jobID, err)
+			}
+		}
 
 		recruiters, err := llmSvc.ExtractRecruiters(ctx, chunk)
 		if err != nil {

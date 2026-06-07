@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -124,8 +125,19 @@ func NewUploadHandler(cfg *config.Config, db *sql.DB) http.HandlerFunc {
 			reqModel = "gemini-3.5-flash"
 		}
 
-		// 5. Instantly trigger background worker via Goroutine, passing down keys, config, and DB
-		go worker.ProcessPDFWorker(jobID, destPath, reqAPIKey, reqModel, cfg, db)
+		// Resolve rate limiter settings from request headers
+		rateLimitRequests := 0
+		if reqRequests, err := strconv.Atoi(r.Header.Get("X-Rate-Limit-Requests")); err == nil && reqRequests > 0 {
+			rateLimitRequests = reqRequests
+		}
+
+		rateLimitInterval := 0
+		if reqInterval, err := strconv.Atoi(r.Header.Get("X-Rate-Limit-Interval")); err == nil && reqInterval > 0 {
+			rateLimitInterval = reqInterval
+		}
+
+		// 5. Instantly trigger background worker via Goroutine, passing down keys, rate limits, config, and DB
+		go worker.ProcessPDFWorker(jobID, destPath, reqAPIKey, reqModel, rateLimitRequests, rateLimitInterval, cfg, db)
 
 		// 6. Return 202 Accepted immediately
 		w.Header().Set("Content-Type", "application/json")

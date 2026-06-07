@@ -8,7 +8,7 @@ func WithCORS(next http.Handler, allowedOrigin string) http.Handler {
 		if r.Header.Get("Origin") == allowedOrigin {
 			w.Header().Set("Access-Control-Allow-Origin", allowedOrigin)
 			w.Header().Set("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
-			w.Header().Set("Access-Control-Allow-Headers", "Content-Type, X-Gemini-API-Key, X-Gemini-Model")
+			w.Header().Set("Access-Control-Allow-Headers", "Content-Type, X-Gemini-API-Key, X-Gemini-Model, X-Rate-Limit-Requests, X-Rate-Limit-Interval")
 			w.Header().Set("Vary", "Origin")
 		}
 
