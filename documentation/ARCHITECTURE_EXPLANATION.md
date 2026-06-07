@@ -22,7 +22,9 @@ This document provides a detailed breakdown of the codebase, explaining the arch
 *   **Intelligent Chunking (`internal/parser/chunker.go`):**
     To bypass Gemini's output token limits, the text is sliced into ~6,000-character chunks. Instead of blind slicing (which could cut an email address in half), the algorithm scans backward for a `\n` or whitespace to safely split chunks along natural boundaries.
 *   **Worker Guardrails (`internal/worker/worker.go`):**
-    The background Goroutine is wrapped in a `defer ... recover()` block. If a panic occurs during processing, it is caught and logged, guaranteeing the main HTTP web server will not crash.
+    The background Goroutine is wrapped in a `defer ... recover()` block. If a panic occurs during processing, it is caught and logged, guaranteeing the main HTTP web server will not crash. Additionally, the job's status is safely updated to `failed` in the database.
+*   **Job Tracking System (`internal/repository/job.go`):**
+    A new database table (`jobs`) tracks exactly where the worker is in its lifecycle. It records the total number of chunks to process and increments the processed count as the LLM successfully parses text. A new polling endpoint (`GET /api/v1/jobs/{job_id}`) was added using Go 1.22+ wildcard routing so clients can fetch realtime updates (`pending`, `processing`, `completed`, `failed`).
 
 ## Phase 3: Structured LLM Extraction
 **Goal:** Map unpredictable PDF text to a predictable JSON array.

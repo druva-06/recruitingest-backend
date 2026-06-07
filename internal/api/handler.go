@@ -71,6 +71,14 @@ func NewUploadHandler(cfg *config.Config, db *sql.DB) http.HandlerFunc {
 
 		// 4. Generate unique filename and setup local storage
 		jobID := uuid.New().String()
+
+		// Write initial job record to the database
+		if err := repository.CreateJob(r.Context(), db, jobID); err != nil {
+			log.Printf("[Error] Failed to create job record: %v\n", err)
+			writeJSONError(w, http.StatusInternalServerError, "Internal server error while creating job tracker")
+			return
+		}
+
 		uploadDir := "/tmp/recruitingest/uploads"
 		if err := os.MkdirAll(uploadDir, 0755); err != nil {
 			log.Printf("[Error] Failed to create upload directory: %v\n", err)

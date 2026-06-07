@@ -29,9 +29,10 @@ func main() {
 	defer db.Close()
 	log.Println("Successfully connected to MySQL.")
 
-	// 3. Setup HTTP Infrastructure
+	// 3. Setup HTTP Infrastructure (using Go 1.22+ method matching)
 	mux := http.NewServeMux()
-	mux.HandleFunc("/api/v1/upload", api.NewUploadHandler(cfg, db))
+	mux.HandleFunc("POST /api/v1/upload", api.NewUploadHandler(cfg, db))
+	mux.HandleFunc("GET /api/v1/jobs/{job_id}", api.NewJobStatusHandler(db))
 
 	// 4. Start Server
 	log.Printf("Server successfully started. Listening on port %s...\n", cfg.ServerPort)

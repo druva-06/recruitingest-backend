@@ -23,8 +23,9 @@ Before starting the application, you must create the database and the table sche
    CREATE DATABASE recruitingest;
    USE recruitingest;
    ```
-3. Run the schema creation query (crucial for deduplication):
+3. Run the schema creation queries (crucial for deduplication and job tracking):
    ```sql
+   -- Core Data Table
    CREATE TABLE IF NOT EXISTS recruiters (
        id INT AUTO_INCREMENT PRIMARY KEY,
        recruiter_name VARCHAR(255) NOT NULL,
@@ -34,6 +35,16 @@ Before starting the application, you must create the database and the table sche
        source_file VARCHAR(255),
        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
        UNIQUE KEY unique_recruiter_email (recruiter_email)
+   );
+
+   -- Job Tracking Table
+   CREATE TABLE IF NOT EXISTS jobs (
+       id VARCHAR(36) PRIMARY KEY,
+       status VARCHAR(50) NOT NULL DEFAULT 'pending',
+       total_chunks INT DEFAULT 0,
+       processed_chunks INT DEFAULT 0,
+       created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+       updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
    );
    ```
 
@@ -101,3 +112,24 @@ curl -X POST http://localhost:8080/api/v1/upload \
 ```
 
 Check the terminal where the Go server is running. You will see the background worker logging the chunking, LLM extraction, and final database insertion steps.
+
+### Polling Job Status
+
+Use the `job_id` returned from the upload endpoint to poll for status and progress:
+
+```bash
+curl http://localhost:8080/api/v1/jobs/a1b2c3d4-e5f6-7890-abcd-ef1234567890
+```
+
+*Expected JSON Response:*
+```json
+{
+  "job_id": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+  "status": "processing",
+  "total_chunks": 5,
+  "processed_chunks": 2,
+  "created_at": "2026-06-07 10:00:00",
+  "updated_at": "2026-06-07 10:01:30"
+}
+```
+*(Status will transition from `pending` -> `processing` -> `completed` or `failed`)*
