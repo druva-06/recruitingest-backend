@@ -12,8 +12,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/druva06/recruit-ingest/config"
-	"github.com/druva06/recruit-ingest/internal/worker"
+	"github.com/druva-06/recruitingest-backend/config"
+	"github.com/druva-06/recruitingest-backend/internal/worker"
 	"github.com/google/uuid"
 )
 
@@ -111,7 +111,7 @@ func NewUploadHandler(cfg *config.Config, db *sql.DB) http.HandlerFunc {
 		// 6. Return 202 Accepted immediately
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusAccepted)
-		
+
 		response := UploadResponse{
 			Status:  "processing",
 			Message: "File accepted successfully. Extraction is executing in the background.",

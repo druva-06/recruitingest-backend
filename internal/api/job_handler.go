@@ -5,7 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 
-	"github.com/druva06/recruit-ingest/internal/repository"
+	"github.com/druva-06/recruitingest-backend/internal/repository"
 )
 
 // NewJobStatusHandler returns an http.HandlerFunc to poll the background job progress.

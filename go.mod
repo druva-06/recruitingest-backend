@@ -1,4 +1,4 @@
-module github.com/druva06/recruit-ingest
+module github.com/druva-06/recruitingest-backend
 
 go 1.25.8
 

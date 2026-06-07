@@ -5,8 +5,8 @@ import (
 	"log"
 	"net/http"
 
-	"github.com/druva06/recruit-ingest/config"
-	"github.com/druva06/recruit-ingest/internal/api"
+	"github.com/druva-06/recruitingest-backend/config"
+	"github.com/druva-06/recruitingest-backend/internal/api"
 	_ "github.com/go-sql-driver/mysql"
 )
 
@@ -22,7 +22,7 @@ func main() {
 	if err != nil {
 		log.Fatalf("[CRITICAL] Failed to open database: %v", err)
 	}
-	
+
 	if err := db.Ping(); err != nil {
 		log.Fatalf("[CRITICAL] Failed to ping database: %v", err)
 	}

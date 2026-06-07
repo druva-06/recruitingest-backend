@@ -7,7 +7,7 @@ import (
 	"log"
 	"time"
 
-	"github.com/druva06/recruit-ingest/internal/models"
+	"github.com/druva-06/recruitingest-backend/internal/models"
 	"github.com/google/generative-ai-go/genai"
 	"google.golang.org/api/option"
 )
@@ -77,7 +77,7 @@ func (s *GeminiService) ExtractRecruiters(ctx context.Context, textChunk string)
 		}
 
 		log.Printf("[Worker/LLM] API Error (attempt %d/%d): %v", i+1, maxRetries, err)
-		
+
 		// Wait and retry with exponential backoff (2s, 4s, 8s) if not the last attempt
 		if i < maxRetries-1 {
 			time.Sleep(time.Duration(1<<i) * 2 * time.Second)

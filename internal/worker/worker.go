@@ -7,12 +7,12 @@ import (
 	"path/filepath"
 	"runtime/debug"
 
-	"github.com/druva06/recruit-ingest/config"
-	"github.com/druva06/recruit-ingest/internal/llm"
-	"github.com/druva06/recruit-ingest/internal/models"
-	"github.com/druva06/recruit-ingest/internal/parser"
-	"github.com/druva06/recruit-ingest/internal/pdfparser"
-	"github.com/druva06/recruit-ingest/internal/repository"
+	"github.com/druva-06/recruitingest-backend/config"
+	"github.com/druva-06/recruitingest-backend/internal/llm"
+	"github.com/druva-06/recruitingest-backend/internal/models"
+	"github.com/druva-06/recruitingest-backend/internal/parser"
+	"github.com/druva-06/recruitingest-backend/internal/pdfparser"
+	"github.com/druva-06/recruitingest-backend/internal/repository"
 )
 
 // ProcessPDFWorker handles the async extraction, chunking, LLM processing, and database persistence.
@@ -42,7 +42,7 @@ func ProcessPDFWorker(jobID, filePath string, cfg *config.Config, db *sql.DB) {
 	// 2. Intelligent Chunking
 	chunks := parser.ChunkText(text, 6000)
 	log.Printf("[Worker] Chunked text into %d parts for Job %s\n", len(chunks), jobID)
-	
+
 	// Record total chunks in the DB tracker
 	_ = repository.SetJobTotalChunks(ctx, db, jobID, len(chunks))
 
@@ -58,13 +58,13 @@ func ProcessPDFWorker(jobID, filePath string, cfg *config.Config, db *sql.DB) {
 	var allRecruiters []models.Recruiter
 	for i, chunk := range chunks {
 		log.Printf("[Worker] Job %s processing chunk %d/%d...\n", jobID, i+1, len(chunks))
-		
+
 		recruiters, err := llmSvc.ExtractRecruiters(ctx, chunk)
 		if err != nil {
 			log.Printf("[Worker] Warning: Job %s failed to extract from chunk %d: %v\n", jobID, i+1, err)
 			continue // Log and continue to next chunk; don't halt the entire file
 		}
-		
+
 		allRecruiters = append(allRecruiters, recruiters...)
 
 		// Increment the processed chunks count after successful extraction
@@ -80,8 +80,8 @@ func ProcessPDFWorker(jobID, filePath string, cfg *config.Config, db *sql.DB) {
 			_ = repository.UpdateJobStatus(ctx, db, jobID, "failed")
 			return
 		}
-		
-		log.Printf("[Worker] Job %s Successfully processed %s. Extracted %d total contacts, inserted %d new unique records.\n", 
+
+		log.Printf("[Worker] Job %s Successfully processed %s. Extracted %d total contacts, inserted %d new unique records.\n",
 			jobID, sourceFileName, len(allRecruiters), insertedCount)
 	} else {
 		log.Printf("[Worker] Job %s completed processing but no valid recruiter contacts were extracted.\n", jobID)

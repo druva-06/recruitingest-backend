@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/druva06/recruit-ingest/internal/models"
+	"github.com/druva-06/recruitingest-backend/internal/models"
 )
 
 // BulkInsertRecruiters inserts a slice of Recruiters into the database in batches.
