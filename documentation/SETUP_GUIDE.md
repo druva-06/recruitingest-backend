@@ -82,6 +82,9 @@ GEMINI_API_KEY=your_gemini_api_key_here
 
 # The Gemini Model to use (e.g., gemini-1.5-flash or gemini-1.5-pro)
 GEMINI_MODEL=gemini-1.5-flash
+
+# The deployed React frontend origin
+CORS_ALLOWED_ORIGIN=http://localhost:5173
 ```
 *(Note: Replace `root`, `password`, and `your_gemini_api_key_here` with your actual credentials).*
 

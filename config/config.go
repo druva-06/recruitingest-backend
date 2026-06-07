@@ -9,10 +9,11 @@ import (
 
 // Config holds the application configuration.
 type Config struct {
-	ServerPort   string
-	DatabaseDSN  string
-	GeminiAPIKey string
-	GeminiModel  string
+	ServerPort        string
+	DatabaseDSN       string
+	GeminiAPIKey      string
+	GeminiModel       string
+	CORSAllowedOrigin string
 }
 
 // Load initializes and validates the configuration from environment variables.
@@ -43,10 +44,16 @@ func Load() *Config {
 		model = "gemini-1.5-flash" // default fallback
 	}
 
+	allowedOrigin := os.Getenv("CORS_ALLOWED_ORIGIN")
+	if allowedOrigin == "" {
+		allowedOrigin = "http://localhost:5173"
+	}
+
 	return &Config{
-		ServerPort:   port,
-		DatabaseDSN:  dbDSN,
-		GeminiAPIKey: apiKey,
-		GeminiModel:  model,
+		ServerPort:        port,
+		DatabaseDSN:       dbDSN,
+		GeminiAPIKey:      apiKey,
+		GeminiModel:       model,
+		CORSAllowedOrigin: allowedOrigin,
 	}
 }

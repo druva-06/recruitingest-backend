@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/druva-06/recruitingest-backend/config"
+	"github.com/druva-06/recruitingest-backend/internal/repository"
 	"github.com/druva-06/recruitingest-backend/internal/worker"
 	"github.com/google/uuid"
 )

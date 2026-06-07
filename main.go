@@ -36,7 +36,7 @@ func main() {
 
 	// 4. Start Server
 	log.Printf("Server successfully started. Listening on port %s...\n", cfg.ServerPort)
-	if err := http.ListenAndServe(cfg.ServerPort, mux); err != nil {
+	if err := http.ListenAndServe(cfg.ServerPort, api.WithCORS(mux, cfg.CORSAllowedOrigin)); err != nil {
 		log.Fatalf("[CRITICAL] Server failed to start: %v", err)
 	}
 }
