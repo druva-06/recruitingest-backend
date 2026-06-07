@@ -71,3 +71,103 @@ func BulkInsertRecruiters(ctx context.Context, db *sql.DB, recruiters []models.R
 
 	return totalInserted, nil
 }
+
+// CreateRecruiter inserts a manually entered recruiter.
+func CreateRecruiter(ctx context.Context, db *sql.DB, recruiter models.Recruiter) (*models.RecruiterRecord, error) {
+	result, err := db.ExecContext(
+		ctx,
+		"INSERT INTO recruiters (recruiter_name, recruiter_title, recruiter_email, company_name, source_file) VALUES (?, ?, ?, ?, ?)",
+		recruiter.Name,
+		recruiter.Title,
+		recruiter.Email,
+		recruiter.Company,
+		"manual-entry",
+	)
+	if err != nil {
+		return nil, fmt.Errorf("failed to insert recruiter: %w", err)
+	}
+
+	id, err := result.LastInsertId()
+	if err != nil {
+		return nil, fmt.Errorf("failed to get recruiter id: %w", err)
+	}
+
+	return GetRecruiterByID(ctx, db, id)
+}
+
+// GetRecruiterByID retrieves a single persisted recruiter.
+func GetRecruiterByID(ctx context.Context, db *sql.DB, id int64) (*models.RecruiterRecord, error) {
+	var recruiter models.RecruiterRecord
+	err := db.QueryRowContext(
+		ctx,
+		"SELECT id, recruiter_name, COALESCE(recruiter_title, ''), recruiter_email, COALESCE(company_name, ''), COALESCE(source_file, ''), created_at FROM recruiters WHERE id = ?",
+		id,
+	).Scan(
+		&recruiter.ID,
+		&recruiter.Name,
+		&recruiter.Title,
+		&recruiter.Email,
+		&recruiter.Company,
+		&recruiter.SourceFile,
+		&recruiter.CreatedAt,
+	)
+	if err != nil {
+		return nil, err
+	}
+	return &recruiter, nil
+}
+
+// SearchRecruiters finds recruiters using optional field filters and a general query.
+func SearchRecruiters(ctx context.Context, db *sql.DB, query, company, email string, limit int) ([]models.RecruiterRecord, error) {
+	conditions := make([]string, 0, 3)
+	args := make([]interface{}, 0, 8)
+
+	if query != "" {
+		like := "%" + query + "%"
+		conditions = append(conditions, "(recruiter_name LIKE ? OR recruiter_title LIKE ? OR recruiter_email LIKE ? OR company_name LIKE ?)")
+		args = append(args, like, like, like, like)
+	}
+	if company != "" {
+		conditions = append(conditions, "company_name LIKE ?")
+		args = append(args, "%"+company+"%")
+	}
+	if email != "" {
+		conditions = append(conditions, "recruiter_email LIKE ?")
+		args = append(args, "%"+email+"%")
+	}
+
+	statement := "SELECT id, recruiter_name, COALESCE(recruiter_title, ''), recruiter_email, COALESCE(company_name, ''), COALESCE(source_file, ''), created_at FROM recruiters"
+	if len(conditions) > 0 {
+		statement += " WHERE " + strings.Join(conditions, " AND ")
+	}
+	statement += " ORDER BY created_at DESC, id DESC LIMIT ?"
+	args = append(args, limit)
+
+	rows, err := db.QueryContext(ctx, statement, args...)
+	if err != nil {
+		return nil, fmt.Errorf("failed to search recruiters: %w", err)
+	}
+	defer rows.Close()
+
+	recruiters := make([]models.RecruiterRecord, 0)
+	for rows.Next() {
+		var recruiter models.RecruiterRecord
+		if err := rows.Scan(
+			&recruiter.ID,
+			&recruiter.Name,
+			&recruiter.Title,
+			&recruiter.Email,
+			&recruiter.Company,
+			&recruiter.SourceFile,
+			&recruiter.CreatedAt,
+		); err != nil {
+			return nil, fmt.Errorf("failed to scan recruiter: %w", err)
+		}
+		recruiters = append(recruiters, recruiter)
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("failed while reading recruiters: %w", err)
+	}
+	return recruiters, nil
+}

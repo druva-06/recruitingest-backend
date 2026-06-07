@@ -151,3 +151,30 @@ curl http://localhost:8080/api/v1/jobs/a1b2c3d4-e5f6-7890-abcd-ef1234567890
 }
 ```
 *(Status will transition from `pending` -> `processing` -> `completed` or `failed`)*
+
+### Search Recruiters
+
+Search across names, titles, companies, and email addresses:
+
+```bash
+curl "http://localhost:8080/api/v1/recruiters?q=gmail.com&company=Acme"
+```
+
+Dedicated `company`, `email`, and optional `limit` query parameters are also
+supported. Results are ordered newest first and limited to 100 records.
+
+### Add a Recruiter Manually
+
+```bash
+curl -X POST http://localhost:8080/api/v1/recruiters \
+  -H "Content-Type: application/json" \
+  -d '{
+    "recruiter_name": "Maya Patel",
+    "recruiter_title": "Senior Technical Recruiter",
+    "recruiter_email": "maya@example.com",
+    "company_name": "Example Labs"
+  }'
+```
+
+Recruiter names and valid email addresses are required. Duplicate email
+addresses return a conflict response instead of creating another record.

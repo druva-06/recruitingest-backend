@@ -33,6 +33,7 @@ func main() {
 	mux := http.NewServeMux()
 	mux.HandleFunc("POST /api/v1/upload", api.NewUploadHandler(cfg, db))
 	mux.HandleFunc("GET /api/v1/jobs/{job_id}", api.NewJobStatusHandler(db))
+	mux.HandleFunc("/api/v1/recruiters", api.NewRecruiterHandler(db))
 
 	// 4. Start Server
 	log.Printf("Server successfully started. Listening on port %s...\n", cfg.ServerPort)
