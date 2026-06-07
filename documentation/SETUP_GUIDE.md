@@ -1,10 +1,25 @@
-# RecruitIngest: Setup & Operations Guide
+# RecruitIngest Backend: Setup & Operations Guide
 
-This document outlines all the non-coding steps required to configure, run, and test the Asynchronous PDF Ingestion Engine.
+This document outlines all the non-coding steps required to configure, run,
+and test the Asynchronous PDF Ingestion Engine.
+
+## Repositories
+
+The application is maintained as two separate Git repositories:
+
+* **Backend:** [`druva-06/recruitingest-backend`](https://github.com/druva-06/recruitingest-backend)
+* **React frontend:** [`druva-06/recruitingest-web`](https://github.com/druva-06/recruitingest-web)
+
+Clone and enter the backend repository before following this guide:
+
+```bash
+git clone https://github.com/druva-06/recruitingest-backend.git
+cd recruitingest-backend
+```
 
 ## 1. Prerequisites
 Ensure you have the following installed and available:
-*   **Go**: Version 1.20 or higher.
+*   **Go**: Version 1.25.8 or higher, matching `go.mod`.
 *   **MySQL**: Version 8.0+ (running locally or accessible via network).
 *   **Google Gemini API Key**: Generate this from Google AI Studio.
 

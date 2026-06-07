@@ -1,6 +1,19 @@
-# RecruitIngest: Architecture & Step-by-Step Implementation
+# RecruitIngest Backend: Architecture & Step-by-Step Implementation
 
-This document provides a detailed breakdown of the codebase, explaining the architectural decisions and step-by-step implementation of the Asynchronous PDF Ingestion Engine.
+This document provides a detailed breakdown of the
+[`recruitingest-backend`](https://github.com/druva-06/recruitingest-backend)
+codebase, explaining the architectural decisions and step-by-step
+implementation of the Asynchronous PDF Ingestion Engine.
+
+The React client is maintained separately in the
+[`recruitingest-web`](https://github.com/druva-06/recruitingest-web)
+repository. It communicates with this backend through the HTTP API.
+
+The backend Go module path is:
+
+```text
+github.com/druva-06/recruitingest-backend
+```
 
 ## Phase 1: Database Setup & Pure Go Text Extraction
 **Goal:** Prove we can extract text natively in Go and connect to the database.
