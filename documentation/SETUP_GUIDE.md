@@ -113,10 +113,14 @@ CORS_ALLOWED_ORIGIN=http://localhost:5173
 
 ## 5. Testing the API
 
-You can test the ingestion engine by sending a PDF file to the `POST /api/v1/upload` endpoint using `curl`.
+You can test the ingestion engine by sending a PDF file to the `POST /api/v1/upload` endpoint using `curl`. You can optionally supply custom credentials, model specifications, and rate-limiting headers:
 
 ```bash
 curl -X POST http://localhost:8080/api/v1/upload \
+  -H "X-Gemini-API-Key: your_gemini_api_key_here" \
+  -H "X-Gemini-Model: gemini-3.5-flash" \
+  -H "X-Rate-Limit-Requests: 10" \
+  -H "X-Rate-Limit-Interval: 60" \
   -F "file=@/path/to/your/sample_resumes.pdf"
 ```
 

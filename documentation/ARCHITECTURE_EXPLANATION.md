@@ -75,3 +75,7 @@ github.com/druva-06/recruitingest-backend
     *   **Counting Query:** Executes a high-performance `SELECT COUNT(*)` query to fetch the total count of matches matching the search parameters.
     *   **Limit & Offset:** Computes the DB query offset using `(page - 1) * limit` and appends `LIMIT ? OFFSET ?` to the SQL query statement.
     *   **Standard Metadata:** Returns search results alongside pagination metadata: `total`, `page`, and `limit`.
+*   **Dynamic Rate Limiting (`internal/worker/worker.go`, `internal/api/handler.go`):**
+    *   **Configurable Throttling:** Users can toggle and configure rate limits in the settings UI (e.g., max requests per second, per 10 seconds, or per minute).
+    *   **Custom Request Headers:** Configuration parameters are sent in headers (`X-Rate-Limit-Requests` and `X-Rate-Limit-Interval`).
+    *   **Goroutine Wait Queues:** Uses `golang.org/x/time/rate` to construct an active Token Bucket rate limiter in the background worker. Before dispatching each document text chunk to the Gemini API, the worker awaits tokens via `limiter.Wait(ctx)`.
