@@ -25,8 +25,8 @@ const (
 	sessionTTL        = 7 * 24 * time.Hour
 )
 
-// oauthConfig builds the OAuth2 client config from app config.
-func oauthConfig(cfg *config.Config) *oauth2.Config {
+// OAuthConfig builds the OAuth2 client config from app config.
+func OAuthConfig(cfg *config.Config) *oauth2.Config {
 	return &oauth2.Config{
 		ClientID:     cfg.GoogleClientID,
 		ClientSecret: cfg.GoogleClientSecret,
@@ -111,7 +111,7 @@ func NewLoginHandler(cfg *config.Config) http.HandlerFunc {
 			Secure:   r.TLS != nil || r.Header.Get("X-Forwarded-Proto") == "https",
 		})
 
-		oc := oauthConfig(cfg)
+		oc := OAuthConfig(cfg)
 		url := oc.AuthCodeURL(state, oauth2.AccessTypeOffline, oauth2.ApprovalForce)
 		http.Redirect(w, r, url, http.StatusTemporaryRedirect)
 	}
@@ -139,7 +139,7 @@ func NewCallbackHandler(cfg *config.Config, db *sql.DB) http.HandlerFunc {
 		http.SetCookie(w, &http.Cookie{Name: stateCookieName, MaxAge: -1, Path: "/"})
 
 		// 2. Exchange authorization code for tokens.
-		oc := oauthConfig(cfg)
+		oc := OAuthConfig(cfg)
 		token, err := oc.Exchange(r.Context(), r.URL.Query().Get("code"))
 		if err != nil {
 			log.Printf("[Auth] Token exchange failed: %v", err)

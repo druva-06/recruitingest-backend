@@ -48,6 +48,12 @@ func NewUploadHandler(cfg *config.Config, db *sql.DB) http.HandlerFunc {
 			return
 		}
 
+		session := SessionFromContext(r.Context())
+		if session == nil {
+			writeJSONError(w, http.StatusUnauthorized, "Not authenticated")
+			return
+		}
+
 		// 1. Memory limits (Max 20MB)
 		r.Body = http.MaxBytesReader(w, r.Body, maxUploadSize)
 		if err := r.ParseMultipartForm(maxUploadSize); err != nil {
@@ -75,7 +81,7 @@ func NewUploadHandler(cfg *config.Config, db *sql.DB) http.HandlerFunc {
 		jobID := uuid.New().String()
 
 		// Write initial job record to the database
-		if err := repository.CreateJob(r.Context(), db, jobID); err != nil {
+		if err := repository.CreateJob(r.Context(), db, jobID, session.Email, header.Filename); err != nil {
 			log.Printf("[Error] Failed to create job record: %v\n", err)
 			writeJSONError(w, http.StatusInternalServerError, "Internal server error while creating job tracker")
 			return

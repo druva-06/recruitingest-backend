@@ -57,8 +57,15 @@ func main() {
 	// -- Protected routes (RequireAuth middleware) --
 	auth := api.RequireAuth(db)
 	mux.Handle("POST /api/v1/upload", auth(http.HandlerFunc(api.NewUploadHandler(cfg, db))))
+	mux.Handle("GET /api/v1/jobs/recent", auth(http.HandlerFunc(api.NewRecentJobsHandler(db))))
 	mux.Handle("GET /api/v1/jobs/{job_id}", auth(http.HandlerFunc(api.NewJobStatusHandler(db))))
 	mux.Handle("/api/v1/recruiters", auth(http.HandlerFunc(api.NewRecruiterHandler(db))))
+	mux.Handle("GET /api/v1/resume", auth(http.HandlerFunc(api.NewResumeHandler(db))))
+	mux.Handle("POST /api/v1/resume", auth(http.HandlerFunc(api.NewResumeHandler(db))))
+	mux.Handle("POST /api/v1/outreach/search-recruiters", auth(http.HandlerFunc(api.NewOutreachSearchHandler(db))))
+	mux.Handle("POST /api/v1/outreach/send-pitch", auth(http.HandlerFunc(api.NewSendPitchHandler(cfg, db))))
+	mux.Handle("GET /api/v1/outreach/prompt", auth(http.HandlerFunc(api.NewPromptSettingsHandler(db))))
+	mux.Handle("POST /api/v1/outreach/prompt", auth(http.HandlerFunc(api.NewPromptSettingsHandler(db))))
 
 	// 5. Start Server
 	log.Printf("Server listening on port %s...\n", cfg.ServerPort)

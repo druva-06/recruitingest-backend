@@ -40,3 +40,28 @@ func NewJobStatusHandler(db *sql.DB) http.HandlerFunc {
 		json.NewEncoder(w).Encode(job)
 	}
 }
+
+// NewRecentJobsHandler returns an http.HandlerFunc to fetch the latest 3 jobs for the user.
+func NewRecentJobsHandler(db *sql.DB) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			writeJSONError(w, http.StatusMethodNotAllowed, "Only GET method is allowed")
+			return
+		}
+
+		session := SessionFromContext(r.Context())
+		if session == nil {
+			writeJSONError(w, http.StatusUnauthorized, "Not authenticated")
+			return
+		}
+
+		jobs, err := repository.GetRecentJobs(r.Context(), db, session.Email)
+		if err != nil {
+			writeJSONError(w, http.StatusInternalServerError, "Failed to retrieve recent jobs")
+			return
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(jobs)
+	}
+}

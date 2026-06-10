@@ -11,13 +11,14 @@ type JobStatus struct {
 	Status          string `json:"status"` // pending, processing, completed, failed
 	TotalChunks     int    `json:"total_chunks"`
 	ProcessedChunks int    `json:"processed_chunks"`
+	FileName        string `json:"file_name"`
 	CreatedAt       string `json:"created_at"`
 	UpdatedAt       string `json:"updated_at"`
 }
 
 // CreateJob initializes a new job entry in the database.
-func CreateJob(ctx context.Context, db *sql.DB, jobID string) error {
-	_, err := db.ExecContext(ctx, "INSERT INTO jobs (id, status) VALUES (?, 'pending')", jobID)
+func CreateJob(ctx context.Context, db *sql.DB, jobID, userEmail, fileName string) error {
+	_, err := db.ExecContext(ctx, "INSERT INTO jobs (id, user_email, file_name, status) VALUES (?, ?, ?, 'pending')", jobID, userEmail, fileName)
 	return err
 }
 
@@ -42,10 +43,37 @@ func IncrementJobProgress(ctx context.Context, db *sql.DB, jobID string) error {
 // GetJobByID retrieves the current status of a job.
 func GetJobByID(ctx context.Context, db *sql.DB, jobID string) (*JobStatus, error) {
 	var job JobStatus
-	err := db.QueryRowContext(ctx, "SELECT id, status, total_chunks, processed_chunks, created_at, updated_at FROM jobs WHERE id = ?", jobID).
-		Scan(&job.JobID, &job.Status, &job.TotalChunks, &job.ProcessedChunks, &job.CreatedAt, &job.UpdatedAt)
+	err := db.QueryRowContext(ctx, "SELECT id, status, total_chunks, processed_chunks, COALESCE(file_name, ''), created_at, updated_at FROM jobs WHERE id = ?", jobID).
+		Scan(&job.JobID, &job.Status, &job.TotalChunks, &job.ProcessedChunks, &job.FileName, &job.CreatedAt, &job.UpdatedAt)
 	if err != nil {
 		return nil, err
 	}
 	return &job, nil
+}
+
+// GetRecentJobs retrieves the latest 3 jobs for a given user email.
+func GetRecentJobs(ctx context.Context, db *sql.DB, email string) ([]JobStatus, error) {
+	const q = `
+		SELECT id, status, total_chunks, processed_chunks, COALESCE(file_name, ''), created_at, updated_at
+		FROM jobs
+		WHERE user_email = ?
+		ORDER BY created_at DESC
+		LIMIT 3
+	`
+	rows, err := db.QueryContext(ctx, q, email)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var jobs []JobStatus
+	for rows.Next() {
+		var job JobStatus
+		err := rows.Scan(&job.JobID, &job.Status, &job.TotalChunks, &job.ProcessedChunks, &job.FileName, &job.CreatedAt, &job.UpdatedAt)
+		if err != nil {
+			return nil, err
+		}
+		jobs = append(jobs, job)
+	}
+	return jobs, nil
 }
