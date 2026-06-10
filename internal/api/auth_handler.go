@@ -122,10 +122,19 @@ func NewCallbackHandler(cfg *config.Config, db *sql.DB) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		// 1. Validate CSRF state.
 		stateCookie, err := r.Cookie(stateCookieName)
-		if err != nil || stateCookie.Value != r.URL.Query().Get("state") {
-			writeJSONError(w, http.StatusBadRequest, "Invalid auth state. Please try signing in again.")
+		queryState := r.URL.Query().Get("state")
+		if err != nil {
+			log.Printf("[Auth] CSRF state validation failed: cookie '%s' not found. Error: %v", stateCookieName, err)
+			log.Printf("[Auth] Cookie Header: %s", r.Header.Get("Cookie"))
+			writeJSONError(w, http.StatusBadRequest, fmt.Sprintf("Invalid auth state (cookie missing). Please try signing in again. Query state: %s", queryState))
 			return
 		}
+		if stateCookie.Value != queryState {
+			log.Printf("[Auth] CSRF state validation failed: value mismatch. Cookie: %s, Query: %s", stateCookie.Value, queryState)
+			writeJSONError(w, http.StatusBadRequest, "Invalid auth state (value mismatch). Please try signing in again.")
+			return
+		}
+
 		// Clear state cookie.
 		http.SetCookie(w, &http.Cookie{Name: stateCookieName, MaxAge: -1, Path: "/"})
 
