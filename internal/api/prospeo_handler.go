@@ -4,7 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"io"
-	"log"
+	"log/slog"
 	"net/http"
 
 	"github.com/druva-06/recruitingest-backend/config"
@@ -60,7 +60,7 @@ func NewProspeoEnrichHandler(cfg *config.Config) http.HandlerFunc {
 
 		reqHttp, err := http.NewRequest("POST", "https://api.prospeo.io/enrich-person", bytes.NewReader(payloadBytes))
 		if err != nil {
-			log.Printf("[Prospeo] Enrich request creation failed: %v", err)
+			slog.Error("Enrich request creation failed", "error", err)
 			writeJSONError(w, http.StatusInternalServerError, "Failed to create request")
 			return
 		}
@@ -69,7 +69,7 @@ func NewProspeoEnrichHandler(cfg *config.Config) http.HandlerFunc {
 
 		resp, err := http.DefaultClient.Do(reqHttp)
 		if err != nil {
-			log.Printf("[Prospeo] Enrich request failed: %v", err)
+			slog.Error("Enrich request failed", "error", err)
 			writeJSONError(w, http.StatusInternalServerError, "Failed to contact Prospeo API")
 			return
 		}
@@ -77,7 +77,7 @@ func NewProspeoEnrichHandler(cfg *config.Config) http.HandlerFunc {
 
 		bodyBytes, _ := io.ReadAll(resp.Body)
 		if resp.StatusCode != 200 {
-			log.Printf("[Prospeo] Enrich returned %d: %s", resp.StatusCode, string(bodyBytes))
+			slog.Error("Enrich returned error status", "statusCode", resp.StatusCode, "body", string(bodyBytes))
 			writeJSONError(w, resp.StatusCode, "Prospeo API returned an error")
 			return
 		}

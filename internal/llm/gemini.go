@@ -4,7 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"log"
+	"log/slog"
 	"strings"
 	"time"
 
@@ -44,7 +44,7 @@ func NewGeminiService(ctx context.Context, apiKey, modelName string) (*GeminiSer
 	}
 
 	model.SystemInstruction = genai.NewUserContent(genai.Text(
-		"Extract recruiter contact details from the provided text. If a field is missing, return an empty string. Only return valid data.",
+		"Extract recruiter contact details from the provided unstructured text. Identify names, titles (e.g. HR, Recruiter), emails, and company names. If a company name isn't explicitly stated but can be confidently inferred from the email domain (e.g., winsoftech.com -> Winsoftech), include it. If a field is missing, return an empty string. Only return valid, well-formatted data.",
 	))
 
 	return &GeminiService{
@@ -77,7 +77,7 @@ func (s *GeminiService) ExtractRecruiters(ctx context.Context, textChunk string)
 			break
 		}
 
-		log.Printf("[Worker/LLM] API Error (attempt %d/%d): %v", i+1, maxRetries, err)
+		slog.Warn("API Error", "attempt", i+1, "maxRetries", maxRetries, "error", err)
 
 		// Wait and retry with exponential backoff (2s, 4s, 8s) if not the last attempt
 		if i < maxRetries-1 {

@@ -7,7 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"log"
+	"log/slog"
 	"net/http"
 	"strings"
 	"time"
@@ -55,7 +55,7 @@ func NewOutreachSearchHandler(db *sql.DB) http.HandlerFunc {
 		query := "SELECT id, recruiter_name, COALESCE(recruiter_title, ''), recruiter_email, COALESCE(company_name, ''), COALESCE(location, ''), COALESCE(linkedin_url, ''), COALESCE(source_file, ''), created_at FROM recruiters WHERE company_name LIKE ?"
 		rows, err := db.QueryContext(r.Context(), query, "%"+company+"%")
 		if err != nil {
-			log.Printf("[Outreach] Failed to search recruiters: %v", err)
+			slog.Error("Failed to search recruiters", "error", err)
 			writeJSONError(w, http.StatusInternalServerError, "Database search failed")
 			return
 		}
@@ -65,7 +65,7 @@ func NewOutreachSearchHandler(db *sql.DB) http.HandlerFunc {
 		for rows.Next() {
 			var rec models.RecruiterRecord
 			if err := rows.Scan(&rec.ID, &rec.Name, &rec.Title, &rec.Email, &rec.Company, &rec.Location, &rec.LinkedinUrl, &rec.SourceFile, &rec.CreatedAt); err != nil {
-				log.Printf("[Outreach] Failed to scan recruiter: %v", err)
+				slog.Error("Failed to scan recruiter", "error", err)
 				writeJSONError(w, http.StatusInternalServerError, "Failed to read recruiter records")
 				return
 			}
@@ -129,7 +129,7 @@ func NewGeneratePitchHandler(cfg *config.Config, db *sql.DB) http.HandlerFunc {
 		// 1. Fetch user's resume from database
 		resume, err := repository.GetUserResume(r.Context(), db, session.Email)
 		if err != nil {
-			log.Printf("[Outreach] Failed to fetch user resume: %v", err)
+			slog.Error("Failed to fetch user resume", "error", err)
 			writeJSONError(w, http.StatusInternalServerError, "Failed to retrieve your resume configuration")
 			return
 		}
@@ -143,7 +143,7 @@ func NewGeneratePitchHandler(cfg *config.Config, db *sql.DB) http.HandlerFunc {
 		var count int
 		err = db.QueryRowContext(r.Context(), "SELECT COUNT(*) FROM recruiters WHERE recruiter_email = ?", recruiterEmail).Scan(&count)
 		if err != nil {
-			log.Printf("[Outreach] Failed to check existing recruiter: %v", err)
+			slog.Error("Failed to check existing recruiter", "error", err)
 			writeJSONError(w, http.StatusInternalServerError, "Database error")
 			return
 		}
@@ -153,7 +153,7 @@ func NewGeneratePitchHandler(cfg *config.Config, db *sql.DB) http.HandlerFunc {
 				"INSERT INTO recruiters (recruiter_name, recruiter_title, recruiter_email, company_name, location, linkedin_url, source_file) VALUES (?, ?, ?, ?, ?, ?, ?)",
 				recruiterName, recruiterTitle, recruiterEmail, companyName, location, linkedinUrl, "pitch-outreach")
 			if err != nil {
-				log.Printf("[Outreach] Failed to save new recruiter: %v", err)
+				slog.Error("Failed to save new recruiter", "error", err)
 				writeJSONError(w, http.StatusInternalServerError, "Failed to save recruiter to contacts")
 				return
 			}
@@ -163,7 +163,7 @@ func NewGeneratePitchHandler(cfg *config.Config, db *sql.DB) http.HandlerFunc {
 				"UPDATE recruiters SET recruiter_title = COALESCE(NULLIF(?, ''), recruiter_title), location = COALESCE(NULLIF(?, ''), location), linkedin_url = COALESCE(NULLIF(?, ''), linkedin_url) WHERE recruiter_email = ?",
 				recruiterTitle, location, linkedinUrl, recruiterEmail)
 			if err != nil {
-				log.Printf("[Outreach] Failed to update recruiter details: %v", err)
+				slog.Error("Failed to update recruiter details", "error", err)
 			}
 		}
 
@@ -180,7 +180,7 @@ func NewGeneratePitchHandler(cfg *config.Config, db *sql.DB) http.HandlerFunc {
 
 		jobID, err := repository.CreateAIJob(r.Context(), db, session.Email, "generate_pitch", payloadBytes)
 		if err != nil {
-			log.Printf("[Error] Failed to create AI job record: %v\n", err)
+			slog.Error("Failed to create AI job record", "error", err)
 			writeJSONError(w, http.StatusInternalServerError, "Internal server error while creating job tracker")
 			return
 		}
@@ -240,7 +240,7 @@ func NewConfirmPitchHandler(cfg *config.Config, db *sql.DB) http.HandlerFunc {
 
 		gmailClient, err := getGmailClient(r.Context(), db, cfg, session)
 		if err != nil {
-			log.Printf("[Outreach] Failed to get Gmail client: %v", err)
+			slog.Error("Failed to get Gmail client", "error", err)
 			writeJSONError(w, http.StatusInternalServerError, "Failed to authorize with Google. Please log out and sign in again.")
 			return
 		}
@@ -254,7 +254,7 @@ func NewConfirmPitchHandler(cfg *config.Config, db *sql.DB) http.HandlerFunc {
 
 		resp, err := gmailClient.Post("https://gmail.googleapis.com/gmail/v1/users/me/messages/send", "application/json", strings.NewReader(string(sendReqBody)))
 		if err != nil {
-			log.Printf("[Outreach] Gmail send API call failed: %v", err)
+			slog.Error("Gmail send API call failed", "error", err)
 			writeJSONError(w, http.StatusInternalServerError, "Gmail API error")
 			return
 		}
@@ -263,7 +263,7 @@ func NewConfirmPitchHandler(cfg *config.Config, db *sql.DB) http.HandlerFunc {
 		respBodyBytes, _ := io.ReadAll(resp.Body)
 
 		if resp.StatusCode != http.StatusOK {
-			log.Printf("[Outreach] Gmail send returned status %d. Body: %s", resp.StatusCode, string(respBodyBytes))
+			slog.Error("Gmail send returned error status", "statusCode", resp.StatusCode, "body", string(respBodyBytes))
 			writeJSONError(w, http.StatusInternalServerError, fmt.Sprintf("Gmail API returned error status: %d", resp.StatusCode))
 			return
 		}
@@ -274,7 +274,7 @@ func NewConfirmPitchHandler(cfg *config.Config, db *sql.DB) http.HandlerFunc {
 			ThreadID string `json:"threadId"`
 		}
 		if jsonErr := json.Unmarshal(respBodyBytes, &gmailResp); jsonErr != nil {
-			log.Printf("[Outreach] Warning: could not parse Gmail send response: %v", jsonErr)
+			slog.Warn("Could not parse Gmail send response", "error", jsonErr)
 		}
 
 		// Record the sent email in our database, keyed by the user's login
@@ -291,7 +291,7 @@ func NewConfirmPitchHandler(cfg *config.Config, db *sql.DB) http.HandlerFunc {
 			Reminder2DelayDays: req.Reminder2DelayDays,
 		})
 		if saveErr != nil {
-			log.Printf("[Outreach] Warning: failed to save sent email record: %v", saveErr)
+			slog.Warn("Failed to save sent email record", "error", saveErr)
 		}
 
 		w.Header().Set("Content-Type", "application/json")
@@ -315,7 +315,7 @@ func NewSentEmailsHandler(db *sql.DB) http.HandlerFunc {
 		}
 		emails, err := repository.GetOutreachEmailsByUser(r.Context(), db, session.Email)
 		if err != nil {
-			log.Printf("[Outreach] Failed to get sent emails: %v", err)
+			slog.Error("Failed to get sent emails", "error", err)
 			writeJSONError(w, http.StatusInternalServerError, "Failed to retrieve sent emails")
 			return
 		}
@@ -342,11 +342,11 @@ func getGmailClient(ctx context.Context, db *sql.DB, cfg *config.Config, session
 	}
 
 	if newToken.AccessToken != session.AccessToken {
-		log.Printf("[Gmail] Saving refreshed access token for user: %s", session.Email)
+		slog.Info("Saving refreshed access token for user", "email", session.Email)
 		const q = "UPDATE sessions SET access_token = ? WHERE session_id = ?"
 		_, dbErr := db.ExecContext(ctx, q, newToken.AccessToken, session.SessionID)
 		if dbErr != nil {
-			log.Printf("[Gmail] Warning: failed to save refreshed token to DB: %v", dbErr)
+			slog.Warn("Failed to save refreshed token to DB", "error", dbErr)
 		}
 	}
 
@@ -409,7 +409,7 @@ func getCustomPrompt(w http.ResponseWriter, r *http.Request, db *sql.DB, email s
 		return
 	}
 	if err != nil {
-		log.Printf("[Outreach] Failed to query custom prompt: %v", err)
+		slog.Error("Failed to query custom prompt", "error", err)
 		writeJSONError(w, http.StatusInternalServerError, "Failed to retrieve custom prompt")
 		return
 	}
@@ -439,7 +439,7 @@ func saveCustomPrompt(w http.ResponseWriter, r *http.Request, db *sql.DB, email 
 	`
 	_, err := db.ExecContext(r.Context(), q, email, prompt)
 	if err != nil {
-		log.Printf("[Outreach] Failed to save custom prompt: %v", err)
+		slog.Error("Failed to save custom prompt", "error", err)
 		writeJSONError(w, http.StatusInternalServerError, "Failed to save custom prompt")
 		return
 	}

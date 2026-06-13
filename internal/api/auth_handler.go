@@ -6,7 +6,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
-	"log"
+	"log/slog"
 	"net/http"
 	"strings"
 	"time"
@@ -125,13 +125,13 @@ func NewCallbackHandler(cfg *config.Config, db *sql.DB) http.HandlerFunc {
 		stateCookie, err := r.Cookie(stateCookieName)
 		queryState := r.URL.Query().Get("state")
 		if err != nil {
-			log.Printf("[Auth] CSRF state validation failed: cookie '%s' not found. Error: %v", stateCookieName, err)
-			log.Printf("[Auth] Cookie Header: %s", r.Header.Get("Cookie"))
+			slog.Error("CSRF state validation failed: cookie not found", "cookieName", stateCookieName, "error", err)
+			slog.Info("Cookie Header", "header", r.Header.Get("Cookie"))
 			writeJSONError(w, http.StatusBadRequest, fmt.Sprintf("Invalid auth state (cookie missing). Please try signing in again. Query state: %s", queryState))
 			return
 		}
 		if stateCookie.Value != queryState {
-			log.Printf("[Auth] CSRF state validation failed: value mismatch. Cookie: %s, Query: %s", stateCookie.Value, queryState)
+			slog.Error("CSRF state validation failed: value mismatch", "cookie", stateCookie.Value, "query", queryState)
 			writeJSONError(w, http.StatusBadRequest, "Invalid auth state (value mismatch). Please try signing in again.")
 			return
 		}
@@ -143,7 +143,7 @@ func NewCallbackHandler(cfg *config.Config, db *sql.DB) http.HandlerFunc {
 		oc := OAuthConfig(cfg)
 		token, err := oc.Exchange(r.Context(), r.URL.Query().Get("code"))
 		if err != nil {
-			log.Printf("[Auth] Token exchange failed: %v", err)
+			slog.Error("Token exchange failed", "error", err)
 			writeJSONError(w, http.StatusUnauthorized, "Authentication failed. Please try again.")
 			return
 		}
@@ -151,14 +151,14 @@ func NewCallbackHandler(cfg *config.Config, db *sql.DB) http.HandlerFunc {
 		// 3. Fetch user info from Google.
 		userInfo, err := fetchGoogleUserInfo(r.Context(), token, oc)
 		if err != nil {
-			log.Printf("[Auth] Could not fetch user info: %v", err)
+			slog.Error("Could not fetch user info", "error", err)
 			writeJSONError(w, http.StatusInternalServerError, "Could not retrieve user profile from Google.")
 			return
 		}
 
 		// 4. Enforce allowlist.
 		if !isAllowed(userInfo.Email, cfg.OAuthAllowedEmails) {
-			log.Printf("[Auth] Blocked login attempt from unlisted email: %s", userInfo.Email)
+			slog.Warn("Blocked login attempt from unlisted email", "email", userInfo.Email)
 			http.Redirect(w, r, cfg.FrontendURL+"/unauthorized", http.StatusTemporaryRedirect)
 			return
 		}
@@ -185,7 +185,7 @@ func NewCallbackHandler(cfg *config.Config, db *sql.DB) http.HandlerFunc {
 			ExpiresAt:    time.Now().Add(sessionTTL),
 		}
 		if err := repository.CreateSession(r.Context(), db, session); err != nil {
-			log.Printf("[Auth] Could not persist session: %v", err)
+			slog.Error("Could not persist session", "error", err)
 			writeJSONError(w, http.StatusInternalServerError, "Could not create session. Please try again.")
 			return
 		}

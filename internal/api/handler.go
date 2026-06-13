@@ -5,7 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"log"
+	"log/slog"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -77,7 +77,7 @@ func NewUploadHandler(cfg *config.Config, db *sql.DB) http.HandlerFunc {
 		// 4. Generate unique filename and setup local storage
 		uploadDir := "/tmp/recruitingest/uploads"
 		if err := os.MkdirAll(uploadDir, 0755); err != nil {
-			log.Printf("[Error] Failed to create upload directory: %v\n", err)
+			slog.Error("Failed to create upload directory", "error", err)
 			writeJSONError(w, http.StatusInternalServerError, "Internal server error")
 			return
 		}
@@ -88,14 +88,14 @@ func NewUploadHandler(cfg *config.Config, db *sql.DB) http.HandlerFunc {
 
 		destFile, err := os.Create(destPath)
 		if err != nil {
-			log.Printf("[Error] Failed to create destination file: %v\n", err)
+			slog.Error("Failed to create destination file", "error", err)
 			writeJSONError(w, http.StatusInternalServerError, "Internal server error")
 			return
 		}
 		defer destFile.Close()
 
 		if _, err := io.Copy(destFile, file); err != nil {
-			log.Printf("[Error] Failed to write file payload: %v\n", err)
+			slog.Error("Failed to write file payload", "error", err)
 			writeJSONError(w, http.StatusInternalServerError, "Internal server error")
 			return
 		}
@@ -107,7 +107,7 @@ func NewUploadHandler(cfg *config.Config, db *sql.DB) http.HandlerFunc {
 
 		jobID, err := repository.CreateAIJob(r.Context(), db, session.Email, "parse_resume", payloadBytes)
 		if err != nil {
-			log.Printf("[Error] Failed to create AI job record: %v\n", err)
+			slog.Error("Failed to create AI job record", "error", err)
 			writeJSONError(w, http.StatusInternalServerError, "Internal server error while creating job tracker")
 			return
 		}

@@ -3,7 +3,7 @@ package worker
 import (
 	"context"
 	"database/sql"
-	"log"
+	"log/slog"
 	"path/filepath"
 	"runtime/debug"
 
@@ -21,28 +21,27 @@ func ProcessPDFWorker(jobID, filePath string, apiKey, modelName string, rateLimi
 	// CRITICAL PRODUCTION GUARDRAIL: Recover from panics to keep main server online.
 	defer func() {
 		if r := recover(); r != nil {
-			log.Printf("[CRITICAL] Panic in worker for Job %s: %v\nStack Trace:\n%s\n", jobID, r, debug.Stack())
+			slog.Error("Panic in worker for Job", "jobID", jobID, "panic", r, "stack", string(debug.Stack()))
 			_ = repository.UpdateJobStatus(context.Background(), db, jobID, "failed")
 		}
 	}()
 
 	ctx := context.Background()
 	_ = repository.UpdateJobStatus(ctx, db, jobID, "processing")
-
-	log.Printf("[Worker] Starting processing for Job %s. File: %s\n", jobID, filePath)
+	slog.Info("Starting processing for Job", "jobID", jobID, "filePath", filePath)
 
 	// 1. Extract Text
 	text, err := pdfparser.ExtractText(filePath)
 	if err != nil {
-		log.Printf("[Worker] Error extracting text for Job %s: %v\n", jobID, err)
+		slog.Error("Error extracting text for Job", "jobID", jobID, "error", err)
 		_ = repository.UpdateJobStatus(ctx, db, jobID, "failed")
 		return
 	}
-	log.Printf("[Worker] Successfully extracted %d characters for Job %s\n", len(text), jobID)
+	slog.Info("Successfully extracted text", "length", len(text), "jobID", jobID)
 
 	// 2. Intelligent Chunking
 	chunks := parser.ChunkText(text, 6000)
-	log.Printf("[Worker] Chunked text into %d parts for Job %s\n", len(chunks), jobID)
+	slog.Info("Chunked text", "chunks", len(chunks), "jobID", jobID)
 
 	// Record total chunks in the DB tracker
 	_ = repository.SetJobTotalChunks(ctx, db, jobID, len(chunks))
@@ -50,7 +49,7 @@ func ProcessPDFWorker(jobID, filePath string, apiKey, modelName string, rateLimi
 	// 3. LLM Integration
 	llmSvc, err := llm.NewGeminiService(ctx, apiKey, modelName)
 	if err != nil {
-		log.Printf("[Worker] Failed to initialize LLM service for Job %s: %v\n", jobID, err)
+		slog.Error("Failed to initialize LLM service for Job", "jobID", jobID, "error", err)
 		_ = repository.UpdateJobStatus(ctx, db, jobID, "failed")
 		return
 	}
@@ -61,25 +60,24 @@ func ProcessPDFWorker(jobID, filePath string, apiKey, modelName string, rateLimi
 	if rateLimitRequests > 0 && rateLimitInterval > 0 {
 		limit := rate.Limit(float64(rateLimitRequests) / float64(rateLimitInterval))
 		limiter = rate.NewLimiter(limit, rateLimitRequests)
-		log.Printf("[Worker] Job %s using rate limiter: %d requests per %ds (limit: %f/sec)\n",
-			jobID, rateLimitRequests, rateLimitInterval, float64(limit))
+		slog.Info("Job using rate limiter", "jobID", jobID, "requests", rateLimitRequests, "intervalSeconds", rateLimitInterval, "limitPerSec", float64(limit))
 	}
 
 	var allRecruiters []models.Recruiter
 	for i, chunk := range chunks {
-		log.Printf("[Worker] Job %s processing chunk %d/%d...\n", jobID, i+1, len(chunks))
+		slog.Info("Job processing chunk", "jobID", jobID, "chunkIndex", i+1, "totalChunks", len(chunks))
 
 		// Wait for rate limiter if active
 		if limiter != nil {
-			log.Printf("[Worker] Job %s waiting for rate limiter token...\n", jobID)
+			slog.Info("Job waiting for rate limiter token", "jobID", jobID)
 			if err := limiter.Wait(ctx); err != nil {
-				log.Printf("[Worker] Job %s rate limiter error: %v\n", jobID, err)
+				slog.Error("Job rate limiter error", "jobID", jobID, "error", err)
 			}
 		}
 
 		recruiters, err := llmSvc.ExtractRecruiters(ctx, chunk)
 		if err != nil {
-			log.Printf("[Worker] Warning: Job %s failed to extract from chunk %d: %v\n", jobID, i+1, err)
+			slog.Warn("Job failed to extract from chunk", "jobID", jobID, "chunkIndex", i+1, "error", err)
 			continue // Log and continue to next chunk; don't halt the entire file
 		}
 
@@ -94,15 +92,14 @@ func ProcessPDFWorker(jobID, filePath string, apiKey, modelName string, rateLimi
 		sourceFileName := filepath.Base(filePath)
 		insertedCount, err := repository.BulkInsertRecruiters(ctx, db, allRecruiters, sourceFileName)
 		if err != nil {
-			log.Printf("[Worker] Job %s failed during database bulk insert: %v\n", jobID, err)
+			slog.Error("Job failed during database bulk insert", "jobID", jobID, "error", err)
 			_ = repository.UpdateJobStatus(ctx, db, jobID, "failed")
 			return
 		}
 
-		log.Printf("[Worker] Job %s Successfully processed %s. Extracted %d total contacts, inserted %d new unique records.\n",
-			jobID, sourceFileName, len(allRecruiters), insertedCount)
+		slog.Info("Job successfully processed file", "jobID", jobID, "fileName", sourceFileName, "extractedCount", len(allRecruiters), "insertedCount", insertedCount)
 	} else {
-		log.Printf("[Worker] Job %s completed processing but no valid recruiter contacts were extracted.\n", jobID)
+		slog.Info("Job completed processing but no valid recruiter contacts were extracted", "jobID", jobID)
 	}
 
 	// 5. Final Success Status

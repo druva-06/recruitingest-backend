@@ -1,7 +1,7 @@
 package config
 
 import (
-	"log"
+	"log/slog"
 	"os"
 	"strings"
 
@@ -38,17 +38,26 @@ func Load() *Config {
 
 	dbDSN := os.Getenv("DATABASE_DSN")
 	if dbDSN == "" {
-		log.Fatal("[CRITICAL] Missing required environment variable: DATABASE_DSN")
+		slog.Error("Missing required environment variable", "variable", "DATABASE_DSN")
+		os.Exit(1)
+	}
+	
+	if !strings.Contains(dbDSN, "parseTime=true") {
+		if strings.Contains(dbDSN, "?") {
+			dbDSN += "&parseTime=true"
+		} else {
+			dbDSN += "?parseTime=true"
+		}
 	}
 
 	apiKey := os.Getenv("GEMINI_API_KEY")
 	if apiKey == "" {
-		log.Println("[INFO] GEMINI_API_KEY not set. API key must be provided by frontend request headers.")
+		slog.Info("GEMINI_API_KEY not set. API key must be provided by frontend request headers.")
 	}
 
 	prospeoKey := os.Getenv("PROSPEO_API_KEY")
 	if prospeoKey == "" {
-		log.Println("[INFO] PROSPEO_API_KEY not set. API key must be provided by frontend request headers.")
+		slog.Info("PROSPEO_API_KEY not set. API key must be provided by frontend request headers.")
 	}
 
 	model := os.Getenv("GEMINI_MODEL")
@@ -63,17 +72,18 @@ func Load() *Config {
 
 	googleClientID := os.Getenv("GOOGLE_CLIENT_ID")
 	if googleClientID == "" {
-		log.Println("[WARN] GOOGLE_CLIENT_ID not set — Google OAuth will not function.")
+		slog.Warn("GOOGLE_CLIENT_ID not set — Google OAuth will not function.")
 	}
 
 	googleClientSecret := os.Getenv("GOOGLE_CLIENT_SECRET")
 	if googleClientSecret == "" {
-		log.Println("[WARN] GOOGLE_CLIENT_SECRET not set — Google OAuth will not function.")
+		slog.Warn("GOOGLE_CLIENT_SECRET not set — Google OAuth will not function.")
 	}
 
 	sessionSecret := os.Getenv("SESSION_SECRET")
 	if sessionSecret == "" {
-		log.Fatal("[CRITICAL] Missing required environment variable: SESSION_SECRET (run: openssl rand -hex 32)")
+		slog.Error("Missing required environment variable", "variable", "SESSION_SECRET")
+		os.Exit(1)
 	}
 
 	callbackURL := os.Getenv("OAUTH_CALLBACK_URL")
@@ -90,7 +100,7 @@ func Load() *Config {
 		}
 	}
 	if len(allowedEmails) == 0 {
-		log.Println("[WARN] OAUTH_ALLOWED_EMAILS not set — no users will be allowed to log in.")
+		slog.Warn("OAUTH_ALLOWED_EMAILS not set — no users will be allowed to log in.")
 	}
 
 	frontendURL := os.Getenv("FRONTEND_URL")

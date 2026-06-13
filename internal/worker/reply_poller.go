@@ -5,7 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
-	"log"
+	"log/slog"
 	"net/http"
 	"time"
 
@@ -36,20 +36,20 @@ func runReplyPoll(db *sql.DB, cfg *config.Config) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
 	defer cancel()
 
-	log.Println("[ReplyPoller] Starting poll cycle...")
+	slog.Info("Starting poll cycle")
 
 	// Get all emails that are still pending a reply
 	emails, err := repository.GetPendingForPolling(ctx, db)
 	if err != nil {
-		log.Printf("[ReplyPoller] Failed to fetch pending emails: %v", err)
+		slog.Error("Failed to fetch pending emails", "error", err)
 		return
 	}
 	if len(emails) == 0 {
-		log.Println("[ReplyPoller] No emails pending reply check.")
+		slog.Info("No emails pending reply check")
 		return
 	}
 
-	log.Printf("[ReplyPoller] Checking %d email thread(s) for replies...", len(emails))
+	slog.Info("Checking email threads for replies", "threadCount", len(emails))
 
 	// Group by user to minimize token refresh calls
 	userEmails := groupByUser(emails)
@@ -58,7 +58,7 @@ func runReplyPoll(db *sql.DB, cfg *config.Config) {
 		// Get the user's session (refresh token) from DB
 		sessions, err := getUserSessions(ctx, db, userEmail)
 		if err != nil || len(sessions) == 0 {
-			log.Printf("[ReplyPoller] No active session found for %s, skipping", userEmail)
+			slog.Warn("No active session found, skipping", "userEmail", userEmail)
 			continue
 		}
 		session := sessions[0]
@@ -73,7 +73,7 @@ func runReplyPoll(db *sql.DB, cfg *config.Config) {
 		tokenSource := ocCfg.TokenSource(ctx, token)
 		newToken, err := tokenSource.Token()
 		if err != nil {
-			log.Printf("[ReplyPoller] Token refresh failed for %s: %v", userEmail, err)
+			slog.Error("Token refresh failed", "userEmail", userEmail, "error", err)
 			continue
 		}
 		if newToken.AccessToken != session.AccessToken {
@@ -88,7 +88,7 @@ func runReplyPoll(db *sql.DB, cfg *config.Config) {
 		}
 	}
 
-	log.Println("[ReplyPoller] Poll cycle complete.")
+	slog.Info("Poll cycle complete")
 }
 
 func checkThread(ctx context.Context, db *sql.DB, client *http.Client, e repository.OutreachEmail) {
@@ -98,17 +98,17 @@ func checkThread(ctx context.Context, db *sql.DB, client *http.Client, e reposit
 	)
 	resp, err := client.Get(url)
 	if err != nil {
-		log.Printf("[ReplyPoller] Failed to fetch thread %s: %v", e.GmailThreadID, err)
+		slog.Error("Failed to fetch thread", "threadID", e.GmailThreadID, "error", err)
 		return
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode == http.StatusNotFound {
-		log.Printf("[ReplyPoller] Thread %s not found (email may have been deleted)", e.GmailThreadID)
+		slog.Warn("Thread not found (email may have been deleted)", "threadID", e.GmailThreadID)
 		return
 	}
 	if resp.StatusCode != http.StatusOK {
-		log.Printf("[ReplyPoller] Thread fetch returned %d for thread %s", resp.StatusCode, e.GmailThreadID)
+		slog.Error("Thread fetch returned error status", "statusCode", resp.StatusCode, "threadID", e.GmailThreadID)
 		return
 	}
 
@@ -118,13 +118,13 @@ func checkThread(ctx context.Context, db *sql.DB, client *http.Client, e reposit
 		} `json:"messages"`
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&threadResp); err != nil {
-		log.Printf("[ReplyPoller] Failed to decode thread response: %v", err)
+		slog.Error("Failed to decode thread response", "error", err)
 		return
 	}
 
 	// If more than 1 message in thread → recruiter replied
 	if len(threadResp.Messages) > 1 {
-		log.Printf("[ReplyPoller] Reply detected for email %d (thread %s)", e.ID, e.GmailThreadID)
+		slog.Info("Reply detected for email", "emailID", e.ID, "threadID", e.GmailThreadID)
 		_ = repository.UpdateOutreachStatus(ctx, db, e.ID, "replied", "replied_at")
 	}
 }

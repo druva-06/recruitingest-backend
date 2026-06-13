@@ -3,8 +3,9 @@ package main
 import (
 	"context"
 	"database/sql"
-	"log"
+	"log/slog"
 	"net/http"
+	"os"
 	"time"
 
 	"github.com/druva-06/recruitingest-backend/config"
@@ -15,22 +16,30 @@ import (
 )
 
 func main() {
+	// 0. Initialize Production Logger
+	logger := slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{
+		Level: slog.LevelInfo,
+	}))
+	slog.SetDefault(logger)
+
 	// 1. Initialize Configuration Engine
-	log.Println("Initializing configuration engine...")
+	slog.Info("Initializing configuration engine...")
 	cfg := config.Load()
-	log.Println("Configuration loaded successfully.")
+	slog.Info("Configuration loaded successfully.")
 
 	// 2. Initialize Database Connection
-	log.Println("Initializing MySQL connection...")
+	slog.Info("Initializing MySQL connection...")
 	db, err := sql.Open("mysql", cfg.DatabaseDSN)
 	if err != nil {
-		log.Fatalf("[CRITICAL] Failed to open database: %v", err)
+		slog.Error("Failed to open database", "error", err)
+		os.Exit(1)
 	}
 	if err := db.Ping(); err != nil {
-		log.Fatalf("[CRITICAL] Failed to ping database: %v", err)
+		slog.Error("Failed to ping database", "error", err)
+		os.Exit(1)
 	}
 	defer db.Close()
-	log.Println("Successfully connected to MySQL.")
+	slog.Info("Successfully connected to MySQL.")
 
 	// 3. Start background session purge goroutine (runs every hour).
 	go func() {
@@ -39,20 +48,20 @@ func main() {
 		for range ticker.C {
 			n, err := repository.PurgeExpiredSessions(context.Background(), db)
 			if err != nil {
-				log.Printf("[Session] Purge error: %v", err)
+				slog.Error("Session purge error", "error", err)
 			} else if n > 0 {
-				log.Printf("[Session] Purged %d expired session(s).", n)
+				slog.Info("Purged expired sessions", "count", n)
 			}
 		}
 	}()
 
 	// 4. Start Gmail reply poller (polls every 3 hours to detect recruiter replies).
 	worker.StartReplyPoller(db, cfg)
-	log.Println("[ReplyPoller] Started background reply detection worker.")
+	slog.Info("Started background reply detection worker")
 
 	// Start AI Queue Worker
 	worker.StartAIQueueWorker(db, cfg)
-	log.Println("[AIQueue] Started background AI queue worker.")
+	slog.Info("Started background AI queue worker")
 
 	// 5. Setup HTTP Infrastructure
 	mux := http.NewServeMux()
@@ -69,6 +78,8 @@ func main() {
 	mux.Handle("GET /api/v1/jobs/recent", auth(http.HandlerFunc(api.NewRecentJobsHandler(db))))
 	mux.Handle("GET /api/v1/jobs/{job_id}", auth(http.HandlerFunc(api.NewJobStatusHandler(db))))
 	mux.Handle("/api/v1/recruiters", auth(http.HandlerFunc(api.NewRecruiterHandler(db))))
+	mux.Handle("POST /api/v1/extract-recruiters", auth(http.HandlerFunc(api.NewExtractTextHandler(db))))
+	mux.Handle("POST /api/v1/recruiters/bulk", auth(http.HandlerFunc(api.NewBulkRecruiterHandler(db))))
 	mux.Handle("GET /api/v1/resume", auth(http.HandlerFunc(api.NewResumeHandler(db))))
 	mux.Handle("POST /api/v1/resume", auth(http.HandlerFunc(api.NewResumeHandler(db))))
 
@@ -100,8 +111,9 @@ func main() {
 	mux.Handle("POST /api/v1/settings/ai", auth(http.HandlerFunc(api.NewAISettingsHandler(db))))
 
 	// 6. Start Server
-	log.Printf("Server listening on port %s...\n", cfg.ServerPort)
-	if err := http.ListenAndServe(cfg.ServerPort, api.WithCORS(mux, cfg.CORSAllowedOrigin)); err != nil {
-		log.Fatalf("[CRITICAL] Server failed to start: %v", err)
+	slog.Info("Server listening", "port", cfg.ServerPort)
+	if err := http.ListenAndServe(cfg.ServerPort, api.WithCORS(api.WithLogging(mux), cfg.CORSAllowedOrigin)); err != nil {
+		slog.Error("Server failed to start", "error", err)
+		os.Exit(1)
 	}
 }

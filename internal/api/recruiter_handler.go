@@ -112,3 +112,97 @@ func createRecruiter(w http.ResponseWriter, r *http.Request, db *sql.DB) {
 	w.WriteHeader(http.StatusCreated)
 	json.NewEncoder(w).Encode(created)
 }
+
+// NewExtractTextHandler handles POST /api/v1/extract-recruiters
+func NewExtractTextHandler(db *sql.DB) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			writeJSONError(w, http.StatusMethodNotAllowed, "Only POST method is allowed")
+			return
+		}
+
+		session := SessionFromContext(r.Context())
+		if session == nil {
+			writeJSONError(w, http.StatusUnauthorized, "Not authenticated")
+			return
+		}
+
+		var payload struct {
+			Text string `json:"text"`
+		}
+		decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20))
+		if err := decoder.Decode(&payload); err != nil {
+			writeJSONError(w, http.StatusBadRequest, "Invalid JSON payload")
+			return
+		}
+
+		if strings.TrimSpace(payload.Text) == "" {
+			writeJSONError(w, http.StatusBadRequest, "Text cannot be empty")
+			return
+		}
+
+		payloadBytes, _ := json.Marshal(map[string]string{
+			"text": payload.Text,
+		})
+
+		jobID, err := repository.CreateAIJob(r.Context(), db, session.Email, "extract_text_recruiters", payloadBytes)
+		if err != nil {
+			writeJSONError(w, http.StatusInternalServerError, "Failed to create AI job")
+			return
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusAccepted)
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"status":  "processing",
+			"message": "Text accepted successfully. Extraction is executing in the background.",
+			"job_id":  jobID,
+		})
+	}
+}
+
+// NewBulkRecruiterHandler handles POST /api/v1/recruiters/bulk
+func NewBulkRecruiterHandler(db *sql.DB) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			writeJSONError(w, http.StatusMethodNotAllowed, "Only POST method is allowed")
+			return
+		}
+
+		var payload struct {
+			Recruiters []models.Recruiter `json:"recruiters"`
+		}
+		decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, 5<<20))
+		if err := decoder.Decode(&payload); err != nil {
+			writeJSONError(w, http.StatusBadRequest, "Invalid payload")
+			return
+		}
+
+		if len(payload.Recruiters) == 0 {
+			writeJSONError(w, http.StatusBadRequest, "No recruiters provided")
+			return
+		}
+
+		// Ensure we don't have panics from empty fields
+		var toInsert []models.Recruiter
+		for _, rec := range payload.Recruiters {
+			rec.Name = strings.TrimSpace(rec.Name)
+			rec.Email = strings.ToLower(strings.TrimSpace(rec.Email))
+			if rec.Name != "" && rec.Email != "" {
+				toInsert = append(toInsert, rec)
+			}
+		}
+
+		insertedCount, err := repository.BulkInsertRecruiters(r.Context(), db, toInsert, "ai-paste")
+		if err != nil {
+			writeJSONError(w, http.StatusInternalServerError, "Failed to bulk insert recruiters")
+			return
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusCreated)
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"inserted": insertedCount,
+		})
+	}
+}

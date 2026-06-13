@@ -5,7 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
-	"log"
+	"log/slog"
 	"time"
 
 	"github.com/druva-06/recruitingest-backend/config"
@@ -30,7 +30,7 @@ func processPendingAIJobs(db *sql.DB, cfg *config.Config) {
 	ctx := context.Background()
 	jobs, err := repository.GetPendingAIJobs(ctx, db)
 	if err != nil {
-		log.Printf("[AIQueue] Failed to get pending jobs: %v", err)
+		slog.Error("Failed to get pending jobs", "error", err)
 		return
 	}
 
@@ -61,7 +61,7 @@ func processSingleJob(ctx context.Context, db *sql.DB, cfg *config.Config, job m
 	}
 
 	if err := repository.UpdateAIJobStatus(ctx, db, int64(job.ID), "processing", nil, nil); err != nil {
-		log.Printf("[AIQueue] Failed to mark job %d as processing: %v", job.ID, err)
+		slog.Error("Failed to mark job as processing", "jobID", job.ID, "error", err)
 		return
 	}
 
@@ -71,6 +71,8 @@ func processSingleJob(ctx context.Context, db *sql.DB, cfg *config.Config, job m
 	switch job.JobType {
 	case "parse_resume":
 		result, processErr = handleParseResume(ctx, db, cfg, job, apiKey, modelName, settings)
+	case "extract_text_recruiters":
+		result, processErr = handleExtractTextRecruiters(ctx, db, cfg, job, apiKey, modelName, settings)
 	case "generate_pitch":
 		result, processErr = handleGeneratePitch(ctx, db, cfg, job, apiKey, modelName)
 	case "generate_reminders":
@@ -94,7 +96,7 @@ func processSingleJob(ctx context.Context, db *sql.DB, cfg *config.Config, job m
 	}
 
 	if err := repository.UpdateAIJobStatus(ctx, db, int64(job.ID), status, resultJSON, errMsg); err != nil {
-		log.Printf("[AIQueue] Failed to mark job %d as %s: %v", job.ID, status, err)
+		slog.Error("Failed to mark job status", "jobID", job.ID, "status", status, "error", err)
 	}
 }
 
@@ -133,7 +135,7 @@ func handleParseResume(ctx context.Context, db *sql.DB, cfg *config.Config, job 
 		}
 		recruiters, err := llmSvc.ExtractRecruiters(ctx, chunk)
 		if err != nil {
-			log.Printf("[AIQueue] chunk extraction failed: %v", err)
+			slog.Warn("Chunk extraction failed", "error", err)
 			continue
 		}
 		allRecruiters = append(allRecruiters, recruiters...)
@@ -179,7 +181,7 @@ func handleGeneratePitch(ctx context.Context, db *sql.DB, cfg *config.Config, jo
 	var customPrompt string
 	err = db.QueryRowContext(ctx, "SELECT custom_prompt FROM user_prompts WHERE email = ?", job.UserEmail).Scan(&customPrompt)
 	if err != nil && err != sql.ErrNoRows {
-		log.Printf("[AIQueue] Warning: failed to query custom prompt from database: %v", err)
+		slog.Warn("Failed to query custom prompt from database", "error", err)
 	}
 
 	geminiSvc, err := llm.NewGeminiService(ctx, apiKey, modelName)
@@ -285,5 +287,45 @@ func handleGenerateReminders(ctx context.Context, db *sql.DB, cfg *config.Config
 
 	return map[string]interface{}{
 		"generated": generated,
+	}, nil
+}
+
+func handleExtractTextRecruiters(ctx context.Context, db *sql.DB, cfg *config.Config, job models.AIJob, apiKey, modelName string, settings *models.UserAISettings) (map[string]interface{}, error) {
+	var payload struct {
+		Text string `json:"text"`
+	}
+	if err := json.Unmarshal(job.Payload, &payload); err != nil {
+		return nil, fmt.Errorf("invalid payload: %w", err)
+	}
+
+	chunks := parser.ChunkText(payload.Text, 6000)
+
+	llmSvc, err := llm.NewGeminiService(ctx, apiKey, modelName)
+	if err != nil {
+		return nil, fmt.Errorf("llm init failed: %w", err)
+	}
+	defer llmSvc.Close()
+
+	var limiter *rate.Limiter
+	if settings.RateLimitRequests > 0 && settings.RateLimitIntervalSeconds > 0 {
+		limit := rate.Limit(float64(settings.RateLimitRequests) / float64(settings.RateLimitIntervalSeconds))
+		limiter = rate.NewLimiter(limit, settings.RateLimitRequests)
+	}
+
+	var allRecruiters []models.Recruiter
+	for _, chunk := range chunks {
+		if limiter != nil {
+			_ = limiter.Wait(ctx)
+		}
+		recruiters, err := llmSvc.ExtractRecruiters(ctx, chunk)
+		if err != nil {
+			slog.Warn("Chunk extraction failed", "error", err)
+			continue
+		}
+		allRecruiters = append(allRecruiters, recruiters...)
+	}
+
+	return map[string]interface{}{
+		"recruiters": allRecruiters,
 	}, nil
 }

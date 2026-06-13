@@ -6,7 +6,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
-	"log"
+	"log/slog"
 	"net/http"
 	"strconv"
 	"strings"
@@ -31,7 +31,7 @@ func NewReminderDraftsHandler(db *sql.DB) http.HandlerFunc {
 		}
 		drafts, err := repository.GetPendingDraftsByUser(r.Context(), db, session.Email)
 		if err != nil {
-			log.Printf("[Reminder] Failed to get drafts: %v", err)
+			slog.Error("Failed to get drafts", "error", err)
 			writeJSONError(w, http.StatusInternalServerError, "Failed to retrieve reminder drafts")
 			return
 		}
@@ -119,7 +119,7 @@ func NewSendReminderHandler(cfg *config.Config, db *sql.DB) http.HandlerFunc {
 
 		gmailClient, err := getGmailClient(r.Context(), db, cfg, session)
 		if err != nil {
-			log.Printf("[Reminder] Failed to get Gmail client: %v", err)
+			slog.Error("Failed to get Gmail client", "error", err)
 			writeJSONError(w, http.StatusInternalServerError, "Gmail auth failed. Please sign in again.")
 			return
 		}
@@ -128,7 +128,7 @@ func NewSendReminderHandler(cfg *config.Config, db *sql.DB) http.HandlerFunc {
 		for _, draftID := range req.DraftIDs {
 			draft, err := repository.GetDraftByID(r.Context(), db, draftID)
 			if err != nil || draft == nil {
-				log.Printf("[Reminder] Draft %d not found: %v", draftID, err)
+				slog.Error("Draft not found", "draftID", draftID, "error", err)
 				failed = append(failed, draftID)
 				continue
 			}
@@ -148,14 +148,14 @@ func NewSendReminderHandler(cfg *config.Config, db *sql.DB) http.HandlerFunc {
 				strings.NewReader(string(sendPayload)),
 			)
 			if err != nil {
-				log.Printf("[Reminder] Gmail send failed for draft %d: %v", draftID, err)
+				slog.Error("Gmail send failed for draft", "draftID", draftID, "error", err)
 				failed = append(failed, draftID)
 				continue
 			}
 			resp.Body.Close()
 
 			if resp.StatusCode != http.StatusOK {
-				log.Printf("[Reminder] Gmail returned %d for draft %d", resp.StatusCode, draftID)
+				slog.Error("Gmail returned error status", "statusCode", resp.StatusCode, "draftID", draftID)
 				failed = append(failed, draftID)
 				continue
 			}
@@ -355,7 +355,7 @@ func NewGenerateReminderDraftsHandler(cfg *config.Config, db *sql.DB) http.Handl
 
 		jobID, err := repository.CreateAIJob(r.Context(), db, session.Email, "generate_reminders", nil)
 		if err != nil {
-			log.Printf("[Error] Failed to create AI job record: %v\n", err)
+			slog.Error("Failed to create AI job record", "error", err)
 			writeJSONError(w, http.StatusInternalServerError, "Failed to queue draft generation")
 			return
 		}
@@ -402,7 +402,7 @@ func generateDraftsForUser(ctx context.Context, db *sql.DB, cfg *config.Config, 
 				daysSinceSent, e.Subject, e.Body, 1,
 			)
 			if genErr != nil {
-				log.Printf("[Reminder] Gemini follow-up gen failed for email %d: %v", e.ID, genErr)
+				slog.Error("Gemini follow-up gen failed for email", "emailID", e.ID, "error", genErr)
 				continue
 			}
 			_, dbErr := repository.CreateReminderDraft(ctx, db, &repository.ReminderDraft{
@@ -432,7 +432,7 @@ func generateDraftsForUser(ctx context.Context, db *sql.DB, cfg *config.Config, 
 					daysSinceSent, e.Subject, e.Body, 2,
 				)
 				if genErr != nil {
-					log.Printf("[Reminder] Gemini follow-up gen failed for email %d R2: %v", e.ID, genErr)
+					slog.Error("Gemini follow-up gen failed for email R2", "emailID", e.ID, "error", genErr)
 					continue
 				}
 				_, dbErr := repository.CreateReminderDraft(ctx, db, &repository.ReminderDraft{
