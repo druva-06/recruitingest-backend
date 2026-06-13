@@ -53,7 +53,7 @@ func NewOutreachSearchHandler(db *sql.DB) http.HandlerFunc {
 		}
 
 		// Search database for recruiters matching this company name
-		query := "SELECT id, recruiter_name, COALESCE(recruiter_title, ''), recruiter_email, COALESCE(company_name, ''), COALESCE(source_file, ''), created_at FROM recruiters WHERE company_name LIKE ?"
+		query := "SELECT id, recruiter_name, COALESCE(recruiter_title, ''), recruiter_email, COALESCE(company_name, ''), COALESCE(location, ''), COALESCE(linkedin_url, ''), COALESCE(source_file, ''), created_at FROM recruiters WHERE company_name LIKE ?"
 		rows, err := db.QueryContext(r.Context(), query, "%"+company+"%")
 		if err != nil {
 			log.Printf("[Outreach] Failed to search recruiters: %v", err)
@@ -65,7 +65,7 @@ func NewOutreachSearchHandler(db *sql.DB) http.HandlerFunc {
 		recruiters := []models.RecruiterRecord{}
 		for rows.Next() {
 			var rec models.RecruiterRecord
-			if err := rows.Scan(&rec.ID, &rec.Name, &rec.Title, &rec.Email, &rec.Company, &rec.SourceFile, &rec.CreatedAt); err != nil {
+			if err := rows.Scan(&rec.ID, &rec.Name, &rec.Title, &rec.Email, &rec.Company, &rec.Location, &rec.LinkedinUrl, &rec.SourceFile, &rec.CreatedAt); err != nil {
 				log.Printf("[Outreach] Failed to scan recruiter: %v", err)
 				writeJSONError(w, http.StatusInternalServerError, "Failed to read recruiter records")
 				return
@@ -80,8 +80,8 @@ func NewOutreachSearchHandler(db *sql.DB) http.HandlerFunc {
 	}
 }
 
-// NewSendPitchHandler handles generating the cold email and sending it.
-func NewSendPitchHandler(cfg *config.Config, db *sql.DB) http.HandlerFunc {
+// NewGeneratePitchHandler handles generating the cold email draft.
+func NewGeneratePitchHandler(cfg *config.Config, db *sql.DB) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
 			writeJSONError(w, http.StatusMethodNotAllowed, "Only POST method is allowed")
@@ -100,6 +100,8 @@ func NewSendPitchHandler(cfg *config.Config, db *sql.DB) http.HandlerFunc {
 			RecruiterEmail string `json:"recruiter_email"`
 			RecruiterName  string `json:"recruiter_name"`
 			RecruiterTitle string `json:"recruiter_title"`
+			Location       string `json:"location"`
+			LinkedinUrl    string `json:"linkedin_url"`
 		}
 
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -112,6 +114,8 @@ func NewSendPitchHandler(cfg *config.Config, db *sql.DB) http.HandlerFunc {
 		recruiterEmail := strings.ToLower(strings.TrimSpace(req.RecruiterEmail))
 		recruiterName := strings.TrimSpace(req.RecruiterName)
 		recruiterTitle := strings.TrimSpace(req.RecruiterTitle)
+		location := strings.TrimSpace(req.Location)
+		linkedinUrl := strings.TrimSpace(req.LinkedinUrl)
 
 		if jobDesc == "" || companyName == "" {
 			writeJSONError(w, http.StatusBadRequest, "Job description and company name are required")
@@ -147,20 +151,20 @@ func NewSendPitchHandler(cfg *config.Config, db *sql.DB) http.HandlerFunc {
 
 		if count == 0 {
 			_, err = db.ExecContext(r.Context(),
-				"INSERT INTO recruiters (recruiter_name, recruiter_title, recruiter_email, company_name, source_file) VALUES (?, ?, ?, ?, ?)",
-				recruiterName, recruiterTitle, recruiterEmail, companyName, "pitch-outreach")
+				"INSERT INTO recruiters (recruiter_name, recruiter_title, recruiter_email, company_name, location, linkedin_url, source_file) VALUES (?, ?, ?, ?, ?, ?, ?)",
+				recruiterName, recruiterTitle, recruiterEmail, companyName, location, linkedinUrl, "pitch-outreach")
 			if err != nil {
 				log.Printf("[Outreach] Failed to save new recruiter: %v", err)
 				writeJSONError(w, http.StatusInternalServerError, "Failed to save recruiter to contacts")
 				return
 			}
-		} else if recruiterTitle != "" {
-			// Update the title if recruiter exists but title is updated
+		} else {
+			// Update the fields if they are provided (for existing recruiters)
 			_, err = db.ExecContext(r.Context(),
-				"UPDATE recruiters SET recruiter_title = ? WHERE recruiter_email = ?",
-				recruiterTitle, recruiterEmail)
+				"UPDATE recruiters SET recruiter_title = COALESCE(NULLIF(?, ''), recruiter_title), location = COALESCE(NULLIF(?, ''), location), linkedin_url = COALESCE(NULLIF(?, ''), linkedin_url) WHERE recruiter_email = ?",
+				recruiterTitle, location, linkedinUrl, recruiterEmail)
 			if err != nil {
-				log.Printf("[Outreach] Failed to update recruiter title: %v", err)
+				log.Printf("[Outreach] Failed to update recruiter details: %v", err)
 			}
 		}
 
@@ -205,7 +209,46 @@ func NewSendPitchHandler(cfg *config.Config, db *sql.DB) http.HandlerFunc {
 			return
 		}
 
-		// 5. Get Gmail HTTP client
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"status":  "draft_generated",
+			"subject": subject,
+			"body":    body,
+		})
+	}
+}
+
+// NewConfirmPitchHandler sends the approved pitch.
+func NewConfirmPitchHandler(cfg *config.Config, db *sql.DB) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			writeJSONError(w, http.StatusMethodNotAllowed, "Only POST method is allowed")
+			return
+		}
+
+		session := SessionFromContext(r.Context())
+		if session == nil {
+			writeJSONError(w, http.StatusUnauthorized, "Not authenticated")
+			return
+		}
+
+		var req struct {
+			RecruiterEmail string `json:"recruiter_email"`
+			Subject        string `json:"subject"`
+			Body           string `json:"body"`
+		}
+
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			writeJSONError(w, http.StatusBadRequest, "Invalid request body")
+			return
+		}
+
+		recruiterEmail := strings.ToLower(strings.TrimSpace(req.RecruiterEmail))
+		if recruiterEmail == "" {
+			writeJSONError(w, http.StatusBadRequest, "Recruiter email is required")
+			return
+		}
+
 		gmailClient, err := getGmailClient(r.Context(), db, cfg, session)
 		if err != nil {
 			log.Printf("[Outreach] Failed to get Gmail client: %v", err)
@@ -213,11 +256,9 @@ func NewSendPitchHandler(cfg *config.Config, db *sql.DB) http.HandlerFunc {
 			return
 		}
 
-		// 6. Build MIME message (no file attachment, text highlighted and Drive Link is referenced in the body)
-		mimeMsg := createMimeMessage(session.Email, recruiterEmail, subject, body, "", nil)
+		mimeMsg := createMimeMessage(session.Email, recruiterEmail, req.Subject, req.Body, "", nil)
 		rawMsg := base64.URLEncoding.EncodeToString([]byte(mimeMsg))
 
-		// 7. Send via Gmail API
 		sendReqBody, _ := json.Marshal(map[string]string{
 			"raw": rawMsg,
 		})
@@ -239,9 +280,7 @@ func NewSendPitchHandler(cfg *config.Config, db *sql.DB) http.HandlerFunc {
 
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(map[string]interface{}{
-			"status":  "sent",
-			"subject": subject,
-			"body":    body,
+			"status": "sent",
 		})
 	}
 }

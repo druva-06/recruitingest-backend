@@ -1,0 +1,88 @@
+package api
+
+import (
+	"bytes"
+	"encoding/json"
+	"io"
+	"log"
+	"net/http"
+
+	"github.com/druva-06/recruitingest-backend/config"
+)
+
+func resolveProspeoKey(r *http.Request, cfg *config.Config) string {
+	key := r.Header.Get("X-Prospeo-API-Key")
+	if key == "" {
+		key = cfg.ProspeoAPIKey
+	}
+	return key
+}
+
+// NewProspeoEnrichHandler enriches a specific person from Prospeo, revealing their email
+func NewProspeoEnrichHandler(cfg *config.Config) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		apiKey := resolveProspeoKey(r, cfg)
+		if apiKey == "" {
+			writeJSONError(w, http.StatusBadRequest, "Prospeo API key is required")
+			return
+		}
+
+		var req struct {
+			FirstName   string `json:"first_name"`
+			LastName    string `json:"last_name"`
+			FullName    string `json:"full_name"`
+			CompanyName string `json:"company_name"`
+			LinkedinUrl string `json:"linkedin_url"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			writeJSONError(w, http.StatusBadRequest, "Invalid request body")
+			return
+		}
+
+		payload := map[string]interface{}{}
+		dataPayload := map[string]interface{}{}
+
+		if req.LinkedinUrl != "" {
+			dataPayload["linkedin_url"] = req.LinkedinUrl
+		} else {
+			if req.FullName != "" {
+				dataPayload["full_name"] = req.FullName
+			} else {
+				dataPayload["first_name"] = req.FirstName
+				dataPayload["last_name"] = req.LastName
+			}
+			dataPayload["company_name"] = req.CompanyName
+		}
+
+		payload["data"] = dataPayload
+
+		payloadBytes, _ := json.Marshal(payload)
+
+		reqHttp, err := http.NewRequest("POST", "https://api.prospeo.io/enrich-person", bytes.NewReader(payloadBytes))
+		if err != nil {
+			log.Printf("[Prospeo] Enrich request creation failed: %v", err)
+			writeJSONError(w, http.StatusInternalServerError, "Failed to create request")
+			return
+		}
+		reqHttp.Header.Set("Content-Type", "application/json")
+		reqHttp.Header.Set("X-KEY", apiKey)
+
+		resp, err := http.DefaultClient.Do(reqHttp)
+		if err != nil {
+			log.Printf("[Prospeo] Enrich request failed: %v", err)
+			writeJSONError(w, http.StatusInternalServerError, "Failed to contact Prospeo API")
+			return
+		}
+		defer resp.Body.Close()
+
+		bodyBytes, _ := io.ReadAll(resp.Body)
+		if resp.StatusCode != 200 {
+			log.Printf("[Prospeo] Enrich returned %d: %s", resp.StatusCode, string(bodyBytes))
+			writeJSONError(w, resp.StatusCode, "Prospeo API returned an error")
+			return
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		w.Write(bodyBytes)
+	}
+}

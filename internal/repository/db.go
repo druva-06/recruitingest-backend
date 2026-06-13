@@ -100,7 +100,7 @@ func GetRecruiterByID(ctx context.Context, db *sql.DB, id int64) (*models.Recrui
 	var recruiter models.RecruiterRecord
 	err := db.QueryRowContext(
 		ctx,
-		"SELECT id, recruiter_name, COALESCE(recruiter_title, ''), recruiter_email, COALESCE(company_name, ''), COALESCE(source_file, ''), created_at FROM recruiters WHERE id = ?",
+		"SELECT id, recruiter_name, COALESCE(recruiter_title, ''), recruiter_email, COALESCE(company_name, ''), COALESCE(location, ''), COALESCE(linkedin_url, ''), COALESCE(source_file, ''), created_at FROM recruiters WHERE id = ?",
 		id,
 	).Scan(
 		&recruiter.ID,
@@ -108,6 +108,8 @@ func GetRecruiterByID(ctx context.Context, db *sql.DB, id int64) (*models.Recrui
 		&recruiter.Title,
 		&recruiter.Email,
 		&recruiter.Company,
+		&recruiter.Location,
+		&recruiter.LinkedinUrl,
 		&recruiter.SourceFile,
 		&recruiter.CreatedAt,
 	)
@@ -149,7 +151,7 @@ func SearchRecruiters(ctx context.Context, db *sql.DB, query, company, email str
 	}
 
 	// 2. Query the actual paginated records
-	statement := "SELECT id, recruiter_name, COALESCE(recruiter_title, ''), recruiter_email, COALESCE(company_name, ''), COALESCE(source_file, ''), created_at FROM recruiters"
+	statement := "SELECT id, recruiter_name, COALESCE(recruiter_title, ''), recruiter_email, COALESCE(company_name, ''), COALESCE(location, ''), COALESCE(linkedin_url, ''), COALESCE(source_file, ''), created_at FROM recruiters"
 	if len(conditions) > 0 {
 		statement += " WHERE " + strings.Join(conditions, " AND ")
 	}
@@ -171,6 +173,8 @@ func SearchRecruiters(ctx context.Context, db *sql.DB, query, company, email str
 			&recruiter.Title,
 			&recruiter.Email,
 			&recruiter.Company,
+			&recruiter.Location,
+			&recruiter.LinkedinUrl,
 			&recruiter.SourceFile,
 			&recruiter.CreatedAt,
 		); err != nil {

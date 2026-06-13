@@ -13,6 +13,7 @@ type Config struct {
 	ServerPort         string
 	DatabaseDSN        string
 	GeminiAPIKey       string
+	ProspeoAPIKey      string
 	GeminiModel        string
 	CORSAllowedOrigin  string
 	GoogleClientID     string
@@ -43,6 +44,11 @@ func Load() *Config {
 	apiKey := os.Getenv("GEMINI_API_KEY")
 	if apiKey == "" {
 		log.Println("[INFO] GEMINI_API_KEY not set. API key must be provided by frontend request headers.")
+	}
+
+	prospeoKey := os.Getenv("PROSPEO_API_KEY")
+	if prospeoKey == "" {
+		log.Println("[INFO] PROSPEO_API_KEY not set. API key must be provided by frontend request headers.")
 	}
 
 	model := os.Getenv("GEMINI_MODEL")
@@ -96,6 +102,7 @@ func Load() *Config {
 		ServerPort:         port,
 		DatabaseDSN:        dbDSN,
 		GeminiAPIKey:       apiKey,
+		ProspeoAPIKey:      prospeoKey,
 		GeminiModel:        model,
 		CORSAllowedOrigin:  allowedOrigin,
 		GoogleClientID:     googleClientID,

@@ -14,7 +14,9 @@ type RecruiterRecord struct {
 	Name       string `json:"recruiter_name"`
 	Title      string `json:"recruiter_title"`
 	Email      string `json:"recruiter_email"`
-	Company    string `json:"company_name"`
-	SourceFile string `json:"source_file"`
-	CreatedAt  string `json:"created_at"`
+	Company     string `json:"company_name"`
+	Location    string `json:"location"`
+	LinkedinUrl string `json:"linkedin_url"`
+	SourceFile  string `json:"source_file"`
+	CreatedAt   string `json:"created_at"`
 }

@@ -63,7 +63,9 @@ func main() {
 	mux.Handle("GET /api/v1/resume", auth(http.HandlerFunc(api.NewResumeHandler(db))))
 	mux.Handle("POST /api/v1/resume", auth(http.HandlerFunc(api.NewResumeHandler(db))))
 	mux.Handle("POST /api/v1/outreach/search-recruiters", auth(http.HandlerFunc(api.NewOutreachSearchHandler(db))))
-	mux.Handle("POST /api/v1/outreach/send-pitch", auth(http.HandlerFunc(api.NewSendPitchHandler(cfg, db))))
+	mux.Handle("POST /api/v1/outreach/prospeo-enrich", auth(http.HandlerFunc(api.NewProspeoEnrichHandler(cfg))))
+	mux.Handle("POST /api/v1/outreach/generate-pitch", auth(http.HandlerFunc(api.NewGeneratePitchHandler(cfg, db))))
+	mux.Handle("POST /api/v1/outreach/confirm-pitch", auth(http.HandlerFunc(api.NewConfirmPitchHandler(cfg, db))))
 	mux.Handle("GET /api/v1/outreach/prompt", auth(http.HandlerFunc(api.NewPromptSettingsHandler(db))))
 	mux.Handle("POST /api/v1/outreach/prompt", auth(http.HandlerFunc(api.NewPromptSettingsHandler(db))))
 
