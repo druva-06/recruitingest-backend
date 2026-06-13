@@ -61,6 +61,58 @@ Before starting the application, you must create the database and the table sche
        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
    );
+
+   -- Outreach Email History (scoped per user login)
+   CREATE TABLE IF NOT EXISTS outreach_emails (
+       id INT AUTO_INCREMENT PRIMARY KEY,
+       user_email VARCHAR(255) NOT NULL,
+       recruiter_email VARCHAR(255) NOT NULL,
+       recruiter_name VARCHAR(255) DEFAULT '',
+       company_name VARCHAR(255) DEFAULT '',
+       subject TEXT,
+       body LONGTEXT,
+       sent_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+       INDEX idx_user_email (user_email)
+   );
+
+   -- Alter outreach_emails to add tracking columns (run once)
+   ALTER TABLE outreach_emails
+     ADD COLUMN status VARCHAR(50) NOT NULL DEFAULT 'awaiting_reply' AFTER sent_at,
+     ADD COLUMN gmail_thread_id VARCHAR(255) DEFAULT NULL AFTER status,
+     ADD COLUMN gmail_message_id VARCHAR(255) DEFAULT NULL AFTER gmail_thread_id,
+     ADD COLUMN reminder1_delay_days INT NOT NULL DEFAULT 5,
+     ADD COLUMN reminder2_delay_days INT NOT NULL DEFAULT 10,
+     ADD COLUMN reminder1_sent_at TIMESTAMP NULL DEFAULT NULL,
+     ADD COLUMN reminder2_sent_at TIMESTAMP NULL DEFAULT NULL,
+     ADD COLUMN replied_at TIMESTAMP NULL DEFAULT NULL,
+     ADD COLUMN ghosted_at TIMESTAMP NULL DEFAULT NULL;
+
+   -- Reminder drafts (Gemini-generated, awaiting user approval)
+   CREATE TABLE IF NOT EXISTS reminder_drafts (
+       id INT AUTO_INCREMENT PRIMARY KEY,
+       outreach_email_id INT NOT NULL,
+       user_email VARCHAR(255) NOT NULL,
+       reminder_number TINYINT NOT NULL,
+       recruiter_email VARCHAR(255) NOT NULL,
+       recruiter_name VARCHAR(255) DEFAULT '',
+       company_name VARCHAR(255) DEFAULT '',
+       gmail_thread_id VARCHAR(255) DEFAULT '',
+       gmail_message_id VARCHAR(255) DEFAULT '',
+       subject TEXT,
+       body LONGTEXT,
+       status VARCHAR(30) NOT NULL DEFAULT 'pending',
+       generated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+       sent_at TIMESTAMP NULL DEFAULT NULL,
+       INDEX idx_user_pending (user_email, status)
+   );
+
+   -- User reminder delay preferences
+   CREATE TABLE IF NOT EXISTS user_reminder_settings (
+       email VARCHAR(255) PRIMARY KEY,
+       reminder1_delay_days INT NOT NULL DEFAULT 5,
+       reminder2_delay_days INT NOT NULL DEFAULT 10,
+       updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+   );
    ```
 
 ---

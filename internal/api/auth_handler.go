@@ -36,6 +36,7 @@ func OAuthConfig(cfg *config.Config) *oauth2.Config {
 			"email",
 			"profile",
 			"https://www.googleapis.com/auth/gmail.send",
+			"https://www.googleapis.com/auth/gmail.readonly",
 		},
 		Endpoint: google.Endpoint,
 	}

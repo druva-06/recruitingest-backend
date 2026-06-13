@@ -53,7 +53,7 @@ func Load() *Config {
 
 	model := os.Getenv("GEMINI_MODEL")
 	if model == "" {
-		model = "gemini-3.5-flash"
+		model = "gemini-3.1-flash-lite"
 	}
 
 	allowedOrigin := os.Getenv("CORS_ALLOWED_ORIGIN")

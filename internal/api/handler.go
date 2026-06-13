@@ -9,14 +9,11 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"time"
 
 	"github.com/druva-06/recruitingest-backend/config"
 	"github.com/druva-06/recruitingest-backend/internal/repository"
-	"github.com/druva-06/recruitingest-backend/internal/worker"
-	"github.com/google/uuid"
 )
 
 const maxUploadSize = 20 << 20 // 20 MB
@@ -78,15 +75,6 @@ func NewUploadHandler(cfg *config.Config, db *sql.DB) http.HandlerFunc {
 		}
 
 		// 4. Generate unique filename and setup local storage
-		jobID := uuid.New().String()
-
-		// Write initial job record to the database
-		if err := repository.CreateJob(r.Context(), db, jobID, session.Email, header.Filename); err != nil {
-			log.Printf("[Error] Failed to create job record: %v\n", err)
-			writeJSONError(w, http.StatusInternalServerError, "Internal server error while creating job tracker")
-			return
-		}
-
 		uploadDir := "/tmp/recruitingest/uploads"
 		if err := os.MkdirAll(uploadDir, 0755); err != nil {
 			log.Printf("[Error] Failed to create upload directory: %v\n", err)
@@ -94,9 +82,8 @@ func NewUploadHandler(cfg *config.Config, db *sql.DB) http.HandlerFunc {
 			return
 		}
 
-		// Format: /tmp/recruitingest/uploads/{jobID}_{timestamp}.pdf
 		timestamp := time.Now().UnixNano()
-		safeFilename := fmt.Sprintf("%s_%d.pdf", jobID, timestamp)
+		safeFilename := fmt.Sprintf("%d_%s", timestamp, header.Filename)
 		destPath := filepath.Join(uploadDir, safeFilename)
 
 		destFile, err := os.Create(destPath)
@@ -113,47 +100,25 @@ func NewUploadHandler(cfg *config.Config, db *sql.DB) http.HandlerFunc {
 			return
 		}
 
-		// Resolve Gemini API key and model (from header, fallback to backend config)
-		reqAPIKey := r.Header.Get("X-Gemini-API-Key")
-		if reqAPIKey == "" {
-			reqAPIKey = cfg.GeminiAPIKey
-		}
-		if reqAPIKey == "" {
-			writeJSONError(w, http.StatusBadRequest, "Gemini API key is required. Please set it in Settings.")
+		payloadBytes, _ := json.Marshal(map[string]string{
+			"file_path": destPath,
+			"file_name": header.Filename,
+		})
+
+		jobID, err := repository.CreateAIJob(r.Context(), db, session.Email, "parse_resume", payloadBytes)
+		if err != nil {
+			log.Printf("[Error] Failed to create AI job record: %v\n", err)
+			writeJSONError(w, http.StatusInternalServerError, "Internal server error while creating job tracker")
 			return
 		}
 
-		reqModel := r.Header.Get("X-Gemini-Model")
-		if reqModel == "" {
-			reqModel = cfg.GeminiModel
-		}
-		if reqModel == "" {
-			reqModel = "gemini-3.5-flash"
-		}
-
-		// Resolve rate limiter settings from request headers
-		rateLimitRequests := 0
-		if reqRequests, err := strconv.Atoi(r.Header.Get("X-Rate-Limit-Requests")); err == nil && reqRequests > 0 {
-			rateLimitRequests = reqRequests
-		}
-
-		rateLimitInterval := 0
-		if reqInterval, err := strconv.Atoi(r.Header.Get("X-Rate-Limit-Interval")); err == nil && reqInterval > 0 {
-			rateLimitInterval = reqInterval
-		}
-
-		// 5. Instantly trigger background worker via Goroutine, passing down keys, rate limits, config, and DB
-		go worker.ProcessPDFWorker(jobID, destPath, reqAPIKey, reqModel, rateLimitRequests, rateLimitInterval, cfg, db)
-
-		// 6. Return 202 Accepted immediately
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusAccepted)
 
-		response := UploadResponse{
-			Status:  "processing",
-			Message: "File accepted successfully. Extraction is executing in the background.",
-			JobID:   jobID,
-		}
-		json.NewEncoder(w).Encode(response)
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"status":  "processing",
+			"message": "File accepted successfully. Extraction is executing in the background.",
+			"job_id":  jobID,
+		})
 	}
 }

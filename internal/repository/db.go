@@ -143,7 +143,7 @@ func SearchRecruiters(ctx context.Context, db *sql.DB, query, company, email str
 	if len(conditions) > 0 {
 		countStatement += " WHERE " + strings.Join(conditions, " AND ")
 	}
-	
+
 	var totalCount int
 	err := db.QueryRowContext(ctx, countStatement, args...).Scan(&totalCount)
 	if err != nil {

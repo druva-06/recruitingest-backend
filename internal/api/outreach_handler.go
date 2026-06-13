@@ -13,7 +13,6 @@ import (
 	"time"
 
 	"github.com/druva-06/recruitingest-backend/config"
-	"github.com/druva-06/recruitingest-backend/internal/llm"
 	"github.com/druva-06/recruitingest-backend/internal/models"
 	"github.com/druva-06/recruitingest-backend/internal/repository"
 	"golang.org/x/oauth2"
@@ -168,57 +167,35 @@ func NewGeneratePitchHandler(cfg *config.Config, db *sql.DB) http.HandlerFunc {
 			}
 		}
 
-		// 3. Resolve Gemini credentials
-		reqAPIKey := r.Header.Get("X-Gemini-API-Key")
-		if reqAPIKey == "" {
-			reqAPIKey = cfg.GeminiAPIKey
-		}
-		if reqAPIKey == "" {
-			writeJSONError(w, http.StatusBadRequest, "Gemini API key is required. Please set it in Settings.")
-			return
-		}
+		payloadBytes, _ := json.Marshal(map[string]string{
+			"job_description": req.JobDescription,
+			"company_name":    req.CompanyName,
+			"recruiter_email": req.RecruiterEmail,
+			"recruiter_name":  req.RecruiterName,
+			"recruiter_title": req.RecruiterTitle,
+			"location":        req.Location,
+			"linkedin_url":    req.LinkedinUrl,
+			"user_name":       session.Name,
+		})
 
-		reqModel := r.Header.Get("X-Gemini-Model")
-		if reqModel == "" {
-			reqModel = cfg.GeminiModel
-		}
-		if reqModel == "" {
-			reqModel = "gemini-3.5-flash"
-		}
-
-		// 4. Load custom prompt if configured
-		var customPrompt string
-		err = db.QueryRowContext(r.Context(), "SELECT custom_prompt FROM user_prompts WHERE email = ?", session.Email).Scan(&customPrompt)
-		if err != nil && err != sql.ErrNoRows {
-			log.Printf("[Outreach] Warning: failed to query custom prompt from database: %v", err)
-		}
-
-		// Initialize Gemini service and generate email content
-		geminiSvc, err := llm.NewGeminiService(r.Context(), reqAPIKey, reqModel)
+		jobID, err := repository.CreateAIJob(r.Context(), db, session.Email, "generate_pitch", payloadBytes)
 		if err != nil {
-			log.Printf("[Outreach] Failed to initialize Gemini service: %v", err)
-			writeJSONError(w, http.StatusInternalServerError, "Failed to initialize AI engine")
-			return
-		}
-		defer geminiSvc.Close()
-
-		subject, body, err := geminiSvc.GenerateEmailContent(r.Context(), reqModel, jobDesc, companyName, recruiterName, session.Name, session.Email, resume.ResumeText, resume.DriveLink, customPrompt)
-		if err != nil {
-			log.Printf("[Outreach] Gemini generation failed: %v", err)
-			writeJSONError(w, http.StatusInternalServerError, "Failed to generate outreach email with AI")
+			log.Printf("[Error] Failed to create AI job record: %v\n", err)
+			writeJSONError(w, http.StatusInternalServerError, "Internal server error while creating job tracker")
 			return
 		}
 
 		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusAccepted)
 		json.NewEncoder(w).Encode(map[string]interface{}{
-			"status":  "draft_generated",
-			"subject": subject,
-			"body":    body,
+			"status":  "processing",
+			"message": "Generating pitch in the background",
+			"job_id":  jobID,
 		})
 	}
 }
 
-// NewConfirmPitchHandler sends the approved pitch.
+// NewConfirmPitchHandler sends the approved pitch and records thread/message IDs.
 func NewConfirmPitchHandler(cfg *config.Config, db *sql.DB) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
@@ -233,9 +210,13 @@ func NewConfirmPitchHandler(cfg *config.Config, db *sql.DB) http.HandlerFunc {
 		}
 
 		var req struct {
-			RecruiterEmail string `json:"recruiter_email"`
-			Subject        string `json:"subject"`
-			Body           string `json:"body"`
+			RecruiterEmail     string `json:"recruiter_email"`
+			RecruiterName      string `json:"recruiter_name"`
+			CompanyName        string `json:"company_name"`
+			Subject            string `json:"subject"`
+			Body               string `json:"body"`
+			Reminder1DelayDays int    `json:"reminder1_delay_days"`
+			Reminder2DelayDays int    `json:"reminder2_delay_days"`
 		}
 
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -247,6 +228,14 @@ func NewConfirmPitchHandler(cfg *config.Config, db *sql.DB) http.HandlerFunc {
 		if recruiterEmail == "" {
 			writeJSONError(w, http.StatusBadRequest, "Recruiter email is required")
 			return
+		}
+
+		// Apply defaults for reminder delays
+		if req.Reminder1DelayDays <= 0 {
+			req.Reminder1DelayDays = 5
+		}
+		if req.Reminder2DelayDays <= 0 {
+			req.Reminder2DelayDays = 10
 		}
 
 		gmailClient, err := getGmailClient(r.Context(), db, cfg, session)
@@ -271,16 +260,69 @@ func NewConfirmPitchHandler(cfg *config.Config, db *sql.DB) http.HandlerFunc {
 		}
 		defer resp.Body.Close()
 
+		respBodyBytes, _ := io.ReadAll(resp.Body)
+
 		if resp.StatusCode != http.StatusOK {
-			respBodyBytes, _ := io.ReadAll(resp.Body)
 			log.Printf("[Outreach] Gmail send returned status %d. Body: %s", resp.StatusCode, string(respBodyBytes))
 			writeJSONError(w, http.StatusInternalServerError, fmt.Sprintf("Gmail API returned error status: %d", resp.StatusCode))
 			return
 		}
 
+		// Parse Gmail response to get threadId and messageId for reply detection
+		var gmailResp struct {
+			ID       string `json:"id"`
+			ThreadID string `json:"threadId"`
+		}
+		if jsonErr := json.Unmarshal(respBodyBytes, &gmailResp); jsonErr != nil {
+			log.Printf("[Outreach] Warning: could not parse Gmail send response: %v", jsonErr)
+		}
+
+		// Record the sent email in our database, keyed by the user's login
+		_, saveErr := repository.SaveOutreachEmail(r.Context(), db, &repository.OutreachEmail{
+			UserEmail:          session.Email,
+			RecruiterEmail:     recruiterEmail,
+			RecruiterName:      req.RecruiterName,
+			CompanyName:        req.CompanyName,
+			Subject:            req.Subject,
+			Body:               req.Body,
+			GmailThreadID:      gmailResp.ThreadID,
+			GmailMessageID:     gmailResp.ID,
+			Reminder1DelayDays: req.Reminder1DelayDays,
+			Reminder2DelayDays: req.Reminder2DelayDays,
+		})
+		if saveErr != nil {
+			log.Printf("[Outreach] Warning: failed to save sent email record: %v", saveErr)
+		}
+
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(map[string]interface{}{
 			"status": "sent",
+		})
+	}
+}
+
+// NewSentEmailsHandler returns the list of sent outreach emails for the current user.
+func NewSentEmailsHandler(db *sql.DB) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			writeJSONError(w, http.StatusMethodNotAllowed, "Only GET method is allowed")
+			return
+		}
+		session := SessionFromContext(r.Context())
+		if session == nil {
+			writeJSONError(w, http.StatusUnauthorized, "Not authenticated")
+			return
+		}
+		emails, err := repository.GetOutreachEmailsByUser(r.Context(), db, session.Email)
+		if err != nil {
+			log.Printf("[Outreach] Failed to get sent emails: %v", err)
+			writeJSONError(w, http.StatusInternalServerError, "Failed to retrieve sent emails")
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"emails": emails,
+			"user":   session.Email,
 		})
 	}
 }
@@ -408,4 +450,3 @@ func saveCustomPrompt(w http.ResponseWriter, r *http.Request, db *sql.DB, email 
 		"custom_prompt": prompt,
 	})
 }
-

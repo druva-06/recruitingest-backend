@@ -61,7 +61,7 @@ func ProcessPDFWorker(jobID, filePath string, apiKey, modelName string, rateLimi
 	if rateLimitRequests > 0 && rateLimitInterval > 0 {
 		limit := rate.Limit(float64(rateLimitRequests) / float64(rateLimitInterval))
 		limiter = rate.NewLimiter(limit, rateLimitRequests)
-		log.Printf("[Worker] Job %s using rate limiter: %d requests per %ds (limit: %f/sec)\n", 
+		log.Printf("[Worker] Job %s using rate limiter: %d requests per %ds (limit: %f/sec)\n",
 			jobID, rateLimitRequests, rateLimitInterval, float64(limit))
 	}
 

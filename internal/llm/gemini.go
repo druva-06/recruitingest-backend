@@ -205,3 +205,73 @@ func (s *GeminiService) GenerateEmailContent(ctx context.Context, modelName, job
 	return emailResult.Subject, emailResult.Body, nil
 }
 
+// GenerateFollowUpEmail generates a polite follow-up reminder email using Gemini.
+func (s *GeminiService) GenerateFollowUpEmail(
+	ctx context.Context,
+	modelName string,
+	recruiterName, companyName, userEmail, userName string,
+	daysSinceSent int,
+	originalSubject, originalBody string,
+	reminderNumber int,
+) (string, string, error) {
+	model := s.client.GenerativeModel(modelName)
+	model.ResponseMIMEType = "application/json"
+	model.ResponseSchema = &genai.Schema{
+		Type: genai.TypeObject,
+		Properties: map[string]*genai.Schema{
+			"subject": {Type: genai.TypeString},
+			"body":    {Type: genai.TypeString},
+		},
+		Required: []string{"subject", "body"},
+	}
+
+	ordinal := "first"
+	if reminderNumber == 2 {
+		ordinal = "second"
+	}
+
+	prompt := fmt.Sprintf(`You are a professional career assistant helping a job seeker follow up with a recruiter.
+
+Write the %s polite follow-up email to a recruiter who has not replied after %d days.
+
+Recruiter Name: %s
+Company: %s
+Applicant Name: %s
+Applicant Email: %s
+Original Email Subject: %s
+
+Original Email (for context, DO NOT copy verbatim):
+%s
+
+Instructions:
+1. Subject: Prefix with "Re: " followed by the original subject.
+2. Body: Write in HTML using <p> tags. Be brief (2-3 short paragraphs). Open with a short polite check-in referencing the original email. Re-state key value briefly. End with a clear, low-pressure call to action.
+3. Keep a warm, professional, non-pushy tone. This is a %s follow-up reminder.
+4. Output ONLY the raw JSON object with keys "subject" and "body". No markdown wrappers.`,
+		ordinal, daysSinceSent,
+		recruiterName, companyName, userName, userEmail,
+		originalSubject, originalBody, ordinal)
+
+	callCtx, cancel := context.WithTimeout(ctx, 45*time.Second)
+	defer cancel()
+
+	resp, err := model.GenerateContent(callCtx, genai.Text(prompt))
+	if err != nil {
+		return "", "", fmt.Errorf("GenerateFollowUpEmail: %w", err)
+	}
+	if len(resp.Candidates) == 0 || len(resp.Candidates[0].Content.Parts) == 0 {
+		return "", "", fmt.Errorf("no content returned from LLM for follow-up")
+	}
+	txt, ok := resp.Candidates[0].Content.Parts[0].(genai.Text)
+	if !ok {
+		return "", "", fmt.Errorf("unexpected response part type for follow-up")
+	}
+	var result struct {
+		Subject string `json:"subject"`
+		Body    string `json:"body"`
+	}
+	if err := json.Unmarshal([]byte(txt), &result); err != nil {
+		return "", "", fmt.Errorf("failed to parse follow-up JSON: %w\nPayload: %s", err, txt)
+	}
+	return result.Subject, result.Body, nil
+}

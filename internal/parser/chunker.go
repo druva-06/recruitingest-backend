@@ -34,7 +34,7 @@ func ChunkText(text string, maxChunkSize int) []string {
 			if !found && unicode.IsSpace(runes[i]) {
 				splitIdx = i
 				found = true
-				// We keep looking backwards to see if there's a better \n split, 
+				// We keep looking backwards to see if there's a better \n split,
 				// but we remember this space as a fallback.
 			}
 		}
