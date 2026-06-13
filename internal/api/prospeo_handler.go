@@ -21,11 +21,14 @@ func resolveProspeoKey(r *http.Request, cfg *config.Config) string {
 // NewProspeoEnrichHandler enriches a specific person from Prospeo, revealing their email
 func NewProspeoEnrichHandler(cfg *config.Config) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		slog.Info("Executing NewProspeoEnrichHandler")
 		apiKey := resolveProspeoKey(r, cfg)
 		if apiKey == "" {
+			slog.Warn("Validation failed: Prospeo API key missing")
 			writeJSONError(w, http.StatusBadRequest, "Prospeo API key is required")
 			return
 		}
+		slog.Debug("Resolved Prospeo API key")
 
 		var req struct {
 			FirstName   string `json:"first_name"`
@@ -35,9 +38,11 @@ func NewProspeoEnrichHandler(cfg *config.Config) http.HandlerFunc {
 			LinkedinUrl string `json:"linkedin_url"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			slog.Warn("Failed to decode enrichment request body", "error", err)
 			writeJSONError(w, http.StatusBadRequest, "Invalid request body")
 			return
 		}
+		slog.Debug("Decoded request payload successfully", "linkedin_url", req.LinkedinUrl, "full_name", req.FullName)
 
 		payload := map[string]interface{}{}
 		dataPayload := map[string]interface{}{}
@@ -53,6 +58,7 @@ func NewProspeoEnrichHandler(cfg *config.Config) http.HandlerFunc {
 			}
 			dataPayload["company_name"] = req.CompanyName
 		}
+		slog.Debug("Constructed payload for Prospeo API", "payload", dataPayload)
 
 		payload["data"] = dataPayload
 
@@ -67,6 +73,7 @@ func NewProspeoEnrichHandler(cfg *config.Config) http.HandlerFunc {
 		reqHttp.Header.Set("Content-Type", "application/json")
 		reqHttp.Header.Set("X-KEY", apiKey)
 
+		slog.Info("Sending enrichment request to Prospeo API")
 		resp, err := http.DefaultClient.Do(reqHttp)
 		if err != nil {
 			slog.Error("Enrich request failed", "error", err)
@@ -74,6 +81,7 @@ func NewProspeoEnrichHandler(cfg *config.Config) http.HandlerFunc {
 			return
 		}
 		defer resp.Body.Close()
+		slog.Debug("Received response from Prospeo API", "status_code", resp.StatusCode)
 
 		bodyBytes, _ := io.ReadAll(resp.Body)
 		if resp.StatusCode != 200 {
@@ -81,6 +89,7 @@ func NewProspeoEnrichHandler(cfg *config.Config) http.HandlerFunc {
 			writeJSONError(w, resp.StatusCode, "Prospeo API returned an error")
 			return
 		}
+		slog.Info("Successfully enriched person from Prospeo API")
 
 		w.Header().Set("Content-Type", "application/json")
 		w.Write(bodyBytes)

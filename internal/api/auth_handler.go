@@ -95,12 +95,15 @@ func fetchGoogleUserInfo(ctx context.Context, token *oauth2.Token, oc *oauth2.Co
 // NewLoginHandler initiates the OAuth flow.
 func NewLoginHandler(cfg *config.Config) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		slog.Debug("Starting OAuth login flow")
 		state, err := randomState()
 		if err != nil {
+			slog.Error("Failed to generate auth state", "error", err)
 			writeJSONError(w, http.StatusInternalServerError, "Could not generate auth state")
 			return
 		}
 
+		slog.Debug("Generated CSRF state, setting cookie", "cookie_name", stateCookieName)
 		// Store state in a short-lived HttpOnly cookie for CSRF protection.
 		http.SetCookie(w, &http.Cookie{
 			Name:     stateCookieName,
@@ -114,6 +117,7 @@ func NewLoginHandler(cfg *config.Config) http.HandlerFunc {
 
 		oc := OAuthConfig(cfg)
 		url := oc.AuthCodeURL(state, oauth2.AccessTypeOffline, oauth2.ApprovalForce)
+		slog.Info("Redirecting user to Google OAuth", "url", url)
 		http.Redirect(w, r, url, http.StatusTemporaryRedirect)
 	}
 }
@@ -121,6 +125,7 @@ func NewLoginHandler(cfg *config.Config) http.HandlerFunc {
 // NewCallbackHandler handles the OAuth2 callback from Google.
 func NewCallbackHandler(cfg *config.Config, db *sql.DB) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		slog.Info("Handling OAuth callback")
 		// 1. Validate CSRF state.
 		stateCookie, err := r.Cookie(stateCookieName)
 		queryState := r.URL.Query().Get("state")
@@ -136,10 +141,12 @@ func NewCallbackHandler(cfg *config.Config, db *sql.DB) http.HandlerFunc {
 			return
 		}
 
+		slog.Debug("CSRF state validated successfully. Clearing state cookie.")
 		// Clear state cookie.
 		http.SetCookie(w, &http.Cookie{Name: stateCookieName, MaxAge: -1, Path: "/"})
 
 		// 2. Exchange authorization code for tokens.
+		slog.Debug("Exchanging auth code for tokens")
 		oc := OAuthConfig(cfg)
 		token, err := oc.Exchange(r.Context(), r.URL.Query().Get("code"))
 		if err != nil {
@@ -149,6 +156,7 @@ func NewCallbackHandler(cfg *config.Config, db *sql.DB) http.HandlerFunc {
 		}
 
 		// 3. Fetch user info from Google.
+		slog.Debug("Fetching Google User Profile")
 		userInfo, err := fetchGoogleUserInfo(r.Context(), token, oc)
 		if err != nil {
 			slog.Error("Could not fetch user info", "error", err)
@@ -157,6 +165,7 @@ func NewCallbackHandler(cfg *config.Config, db *sql.DB) http.HandlerFunc {
 		}
 
 		// 4. Enforce allowlist.
+		slog.Debug("Enforcing user allowlist", "email", userInfo.Email)
 		if !isAllowed(userInfo.Email, cfg.OAuthAllowedEmails) {
 			slog.Warn("Blocked login attempt from unlisted email", "email", userInfo.Email)
 			http.Redirect(w, r, cfg.FrontendURL+"/unauthorized", http.StatusTemporaryRedirect)
@@ -164,8 +173,10 @@ func NewCallbackHandler(cfg *config.Config, db *sql.DB) http.HandlerFunc {
 		}
 
 		// 5. Mint a session.
+		slog.Debug("Minting new session ID")
 		sessionID, err := randomSessionID()
 		if err != nil {
+			slog.Error("Failed to generate session ID", "error", err)
 			writeJSONError(w, http.StatusInternalServerError, "Could not create session")
 			return
 		}
@@ -184,6 +195,7 @@ func NewCallbackHandler(cfg *config.Config, db *sql.DB) http.HandlerFunc {
 			RefreshToken: refreshToken,
 			ExpiresAt:    time.Now().Add(sessionTTL),
 		}
+		slog.Debug("Persisting session to database", "email", session.Email)
 		if err := repository.CreateSession(r.Context(), db, session); err != nil {
 			slog.Error("Could not persist session", "error", err)
 			writeJSONError(w, http.StatusInternalServerError, "Could not create session. Please try again.")
@@ -191,6 +203,7 @@ func NewCallbackHandler(cfg *config.Config, db *sql.DB) http.HandlerFunc {
 		}
 
 		// 6. Set the session cookie.
+		slog.Debug("Setting session cookie and redirecting to frontend")
 		isSecure := r.TLS != nil || r.Header.Get("X-Forwarded-Proto") == "https"
 		http.SetCookie(w, &http.Cookie{
 			Name:     sessionCookieName,
@@ -203,6 +216,7 @@ func NewCallbackHandler(cfg *config.Config, db *sql.DB) http.HandlerFunc {
 		})
 
 		// 7. Redirect to the frontend app.
+		slog.Info("Successfully logged in user", "email", session.Email)
 		http.Redirect(w, r, cfg.FrontendURL, http.StatusTemporaryRedirect)
 	}
 }
@@ -217,17 +231,24 @@ type meResponse struct {
 // NewMeHandler returns the authenticated user's profile from their session.
 func NewMeHandler(db *sql.DB) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		slog.Debug("Handling /me request to fetch user profile")
 		cookie, err := r.Cookie(sessionCookieName)
 		if err != nil {
+			slog.Warn("No session cookie found")
 			writeJSONError(w, http.StatusUnauthorized, "Not authenticated")
 			return
 		}
+		
+		slog.Debug("Fetching session from database")
 		session, err := repository.GetSession(r.Context(), db, cookie.Value)
 		if err != nil || session == nil {
+			slog.Warn("Session expired or invalid", "error", err)
 			http.SetCookie(w, &http.Cookie{Name: sessionCookieName, MaxAge: -1, Path: "/"})
 			writeJSONError(w, http.StatusUnauthorized, "Session expired. Please sign in again.")
 			return
 		}
+		
+		slog.Info("Successfully retrieved user profile", "email", session.Email)
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(meResponse{
 			Email:   session.Email,
@@ -240,13 +261,21 @@ func NewMeHandler(db *sql.DB) http.HandlerFunc {
 // NewLogoutHandler deletes the server-side session and clears the cookie.
 func NewLogoutHandler(db *sql.DB) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		slog.Debug("Handling logout request")
 		if r.Method != http.MethodPost {
+			slog.Warn("Invalid method for logout", "method", r.Method)
 			writeJSONError(w, http.StatusMethodNotAllowed, "Use POST to logout")
 			return
 		}
+		
 		if cookie, err := r.Cookie(sessionCookieName); err == nil {
+			slog.Debug("Deleting session from database")
 			_ = repository.DeleteSession(r.Context(), db, cookie.Value)
+		} else {
+			slog.Debug("No session cookie found during logout")
 		}
+		
+		slog.Debug("Clearing session cookie")
 		http.SetCookie(w, &http.Cookie{
 			Name:     sessionCookieName,
 			Value:    "",
@@ -255,6 +284,8 @@ func NewLogoutHandler(db *sql.DB) http.HandlerFunc {
 			HttpOnly: true,
 			SameSite: http.SameSiteLaxMode,
 		})
+		
+		slog.Info("User logged out successfully")
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(map[string]string{"status": "logged_out"})
 	}

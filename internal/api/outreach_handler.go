@@ -26,7 +26,9 @@ type SearchRecruitersByCompanyResponse struct {
 // NewOutreachSearchHandler searches recruiters by company name for outreach.
 func NewOutreachSearchHandler(db *sql.DB) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		slog.Info("Executing NewOutreachSearchHandler")
 		if r.Method != http.MethodPost {
+			slog.Warn("Method not allowed", "method", r.Method)
 			writeJSONError(w, http.StatusMethodNotAllowed, "Only POST method is allowed")
 			return
 		}
@@ -41,9 +43,11 @@ func NewOutreachSearchHandler(db *sql.DB) http.HandlerFunc {
 			CompanyName string `json:"company_name"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			slog.Warn("Failed to decode outreach search payload", "error", err)
 			writeJSONError(w, http.StatusBadRequest, "Invalid request body")
 			return
 		}
+		slog.Debug("Decoded request payload successfully")
 
 		company := strings.TrimSpace(req.CompanyName)
 		if company == "" {
@@ -52,6 +56,7 @@ func NewOutreachSearchHandler(db *sql.DB) http.HandlerFunc {
 		}
 
 		// Search database for recruiters matching this company name
+		slog.Info("Searching recruiters by company", "company", company)
 		query := "SELECT id, recruiter_name, COALESCE(recruiter_title, ''), recruiter_email, COALESCE(company_name, ''), COALESCE(location, ''), COALESCE(linkedin_url, ''), COALESCE(source_file, ''), created_at FROM recruiters WHERE company_name LIKE ?"
 		rows, err := db.QueryContext(r.Context(), query, "%"+company+"%")
 		if err != nil {
@@ -60,6 +65,7 @@ func NewOutreachSearchHandler(db *sql.DB) http.HandlerFunc {
 			return
 		}
 		defer rows.Close()
+		slog.Debug("Executed search query successfully")
 
 		recruiters := []models.RecruiterRecord{}
 		for rows.Next() {
@@ -82,7 +88,9 @@ func NewOutreachSearchHandler(db *sql.DB) http.HandlerFunc {
 // NewGeneratePitchHandler handles generating the cold email draft.
 func NewGeneratePitchHandler(cfg *config.Config, db *sql.DB) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		slog.Info("Executing NewGeneratePitchHandler")
 		if r.Method != http.MethodPost {
+			slog.Warn("Method not allowed", "method", r.Method)
 			writeJSONError(w, http.StatusMethodNotAllowed, "Only POST method is allowed")
 			return
 		}
@@ -122,11 +130,13 @@ func NewGeneratePitchHandler(cfg *config.Config, db *sql.DB) http.HandlerFunc {
 		}
 
 		if recruiterEmail == "" {
+			slog.Warn("Validation failed: recruiter email missing")
 			writeJSONError(w, http.StatusBadRequest, "Recruiter email is required to send email")
 			return
 		}
 
 		// 1. Fetch user's resume from database
+		slog.Debug("Fetching user resume configuration", "email", session.Email)
 		resume, err := repository.GetUserResume(r.Context(), db, session.Email)
 		if err != nil {
 			slog.Error("Failed to fetch user resume", "error", err)
@@ -149,6 +159,7 @@ func NewGeneratePitchHandler(cfg *config.Config, db *sql.DB) http.HandlerFunc {
 		}
 
 		if count == 0 {
+			slog.Debug("Inserting new recruiter into database", "email", recruiterEmail)
 			_, err = db.ExecContext(r.Context(),
 				"INSERT INTO recruiters (recruiter_name, recruiter_title, recruiter_email, company_name, location, linkedin_url, source_file) VALUES (?, ?, ?, ?, ?, ?, ?)",
 				recruiterName, recruiterTitle, recruiterEmail, companyName, location, linkedinUrl, "pitch-outreach")
@@ -157,8 +168,10 @@ func NewGeneratePitchHandler(cfg *config.Config, db *sql.DB) http.HandlerFunc {
 				writeJSONError(w, http.StatusInternalServerError, "Failed to save recruiter to contacts")
 				return
 			}
+			slog.Info("Successfully inserted new recruiter")
 		} else {
 			// Update the fields if they are provided (for existing recruiters)
+			slog.Debug("Updating existing recruiter details", "email", recruiterEmail)
 			_, err = db.ExecContext(r.Context(),
 				"UPDATE recruiters SET recruiter_title = COALESCE(NULLIF(?, ''), recruiter_title), location = COALESCE(NULLIF(?, ''), location), linkedin_url = COALESCE(NULLIF(?, ''), linkedin_url) WHERE recruiter_email = ?",
 				recruiterTitle, location, linkedinUrl, recruiterEmail)
@@ -198,7 +211,9 @@ func NewGeneratePitchHandler(cfg *config.Config, db *sql.DB) http.HandlerFunc {
 // NewConfirmPitchHandler sends the approved pitch and records thread/message IDs.
 func NewConfirmPitchHandler(cfg *config.Config, db *sql.DB) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		slog.Info("Executing NewConfirmPitchHandler")
 		if r.Method != http.MethodPost {
+			slog.Warn("Method not allowed", "method", r.Method)
 			writeJSONError(w, http.StatusMethodNotAllowed, "Only POST method is allowed")
 			return
 		}
@@ -304,7 +319,9 @@ func NewConfirmPitchHandler(cfg *config.Config, db *sql.DB) http.HandlerFunc {
 // NewSentEmailsHandler returns the list of sent outreach emails for the current user.
 func NewSentEmailsHandler(db *sql.DB) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		slog.Info("Executing NewSentEmailsHandler")
 		if r.Method != http.MethodGet {
+			slog.Warn("Method not allowed", "method", r.Method)
 			writeJSONError(w, http.StatusMethodNotAllowed, "Only GET method is allowed")
 			return
 		}
@@ -380,18 +397,23 @@ func createMimeMessage(sender, to, subject, body string, attachmentFilename stri
 // NewPromptSettingsHandler handles GET and POST for custom outreach prompts.
 func NewPromptSettingsHandler(db *sql.DB) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		slog.Info("Executing NewPromptSettingsHandler")
 		session := SessionFromContext(r.Context())
 		if session == nil {
+			slog.Warn("Unauthorized access attempt")
 			writeJSONError(w, http.StatusUnauthorized, "Not authenticated")
 			return
 		}
 
 		switch r.Method {
 		case http.MethodGet:
+			slog.Debug("Handling GET custom prompt request")
 			getCustomPrompt(w, r, db, session.Email)
 		case http.MethodPost:
+			slog.Debug("Handling POST custom prompt request")
 			saveCustomPrompt(w, r, db, session.Email)
 		default:
+			slog.Warn("Method not allowed", "method", r.Method)
 			writeJSONError(w, http.StatusMethodNotAllowed, "Only GET and POST methods are allowed")
 		}
 	}

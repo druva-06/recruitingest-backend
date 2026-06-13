@@ -20,21 +20,28 @@ import (
 // NewReminderDraftsHandler — GET: list pending drafts + badge count.
 func NewReminderDraftsHandler(db *sql.DB) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		slog.Debug("Executing NewReminderDraftsHandler")
 		if r.Method != http.MethodGet {
 			writeJSONError(w, http.StatusMethodNotAllowed, "Only GET allowed")
 			return
 		}
+		
+		slog.Debug("Extracting session for pending drafts")
 		session := SessionFromContext(r.Context())
 		if session == nil {
 			writeJSONError(w, http.StatusUnauthorized, "Not authenticated")
 			return
 		}
+		
+		slog.Debug("Querying database for user's pending drafts", "user", session.Email)
 		drafts, err := repository.GetPendingDraftsByUser(r.Context(), db, session.Email)
 		if err != nil {
 			slog.Error("Failed to get drafts", "error", err)
 			writeJSONError(w, http.StatusInternalServerError, "Failed to retrieve reminder drafts")
 			return
 		}
+		
+		slog.Info("Successfully fetched pending drafts", "count", len(drafts))
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(map[string]interface{}{
 			"drafts": drafts,
@@ -46,12 +53,14 @@ func NewReminderDraftsHandler(db *sql.DB) http.HandlerFunc {
 // NewReminderDraftActionHandler — PATCH to edit, DELETE to reject a single draft.
 func NewReminderDraftActionHandler(db *sql.DB) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		slog.Debug("Executing NewReminderDraftActionHandler")
 		session := SessionFromContext(r.Context())
 		if session == nil {
 			writeJSONError(w, http.StatusUnauthorized, "Not authenticated")
 			return
 		}
 
+		slog.Debug("Parsing draft ID from URL path")
 		// Extract ID from path: /api/v1/reminders/drafts/{id}
 		parts := strings.Split(strings.TrimSuffix(r.URL.Path, "/"), "/")
 		if len(parts) == 0 {
@@ -67,6 +76,7 @@ func NewReminderDraftActionHandler(db *sql.DB) http.HandlerFunc {
 
 		switch r.Method {
 		case http.MethodPatch:
+			slog.Debug("Processing PATCH request to update draft content", "draftID", id)
 			var req struct {
 				Subject string `json:"subject"`
 				Body    string `json:"body"`
@@ -75,18 +85,25 @@ func NewReminderDraftActionHandler(db *sql.DB) http.HandlerFunc {
 				writeJSONError(w, http.StatusBadRequest, "Invalid request body")
 				return
 			}
+			
+			slog.Debug("Saving updated draft content to database")
 			if err := repository.UpdateDraftContent(r.Context(), db, id, req.Subject, req.Body); err != nil {
 				writeJSONError(w, http.StatusInternalServerError, "Failed to update draft")
 				return
 			}
+			
+			slog.Info("Successfully updated draft", "draftID", id)
 			w.Header().Set("Content-Type", "application/json")
 			json.NewEncoder(w).Encode(map[string]string{"status": "updated"})
 
 		case http.MethodDelete:
+			slog.Debug("Processing DELETE request to reject draft", "draftID", id)
 			if err := repository.RejectDraft(r.Context(), db, id); err != nil {
 				writeJSONError(w, http.StatusInternalServerError, "Failed to reject draft")
 				return
 			}
+			
+			slog.Info("Successfully rejected draft", "draftID", id)
 			w.Header().Set("Content-Type", "application/json")
 			json.NewEncoder(w).Encode(map[string]string{"status": "rejected"})
 
@@ -99,7 +116,9 @@ func NewReminderDraftActionHandler(db *sql.DB) http.HandlerFunc {
 // NewSendReminderHandler — POST: send one or more approved reminder drafts.
 func NewSendReminderHandler(cfg *config.Config, db *sql.DB) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		slog.Info("Executing NewSendReminderHandler")
 		if r.Method != http.MethodPost {
+			slog.Warn("Method not allowed", "method", r.Method)
 			writeJSONError(w, http.StatusMethodNotAllowed, "Only POST allowed")
 			return
 		}
@@ -113,9 +132,11 @@ func NewSendReminderHandler(cfg *config.Config, db *sql.DB) http.HandlerFunc {
 			DraftIDs []int64 `json:"draft_ids"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil || len(req.DraftIDs) == 0 {
+			slog.Warn("Validation failed: missing or invalid draft_ids", "error", err)
 			writeJSONError(w, http.StatusBadRequest, "draft_ids array is required")
 			return
 		}
+		slog.Debug("Decoded request payload successfully", "drafts_count", len(req.DraftIDs))
 
 		gmailClient, err := getGmailClient(r.Context(), db, cfg, session)
 		if err != nil {
@@ -186,7 +207,9 @@ func NewSendReminderHandler(cfg *config.Config, db *sql.DB) http.HandlerFunc {
 // NewEmailStatusHandler — PATCH: manually update status of an outreach email.
 func NewEmailStatusHandler(db *sql.DB) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		slog.Info("Executing NewEmailStatusHandler")
 		if r.Method != http.MethodPatch {
+			slog.Warn("Method not allowed", "method", r.Method)
 			writeJSONError(w, http.StatusMethodNotAllowed, "Only PATCH allowed")
 			return
 		}
@@ -200,9 +223,11 @@ func NewEmailStatusHandler(db *sql.DB) http.HandlerFunc {
 		idStr := parts[len(parts)-2] // path: /emails/{id}/status
 		id, err := strconv.ParseInt(idStr, 10, 64)
 		if err != nil {
+			slog.Warn("Validation failed: invalid email ID", "idStr", idStr)
 			writeJSONError(w, http.StatusBadRequest, "Invalid email ID")
 			return
 		}
+		slog.Debug("Parsed email ID successfully", "email_id", id)
 
 		var req struct {
 			Status string `json:"status"`
@@ -236,7 +261,9 @@ func NewEmailStatusHandler(db *sql.DB) http.HandlerFunc {
 // NewEmailDelayHandler — PATCH: update per-email reminder delay from Sent Emails view.
 func NewEmailDelayHandler(db *sql.DB) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		slog.Info("Executing NewEmailDelayHandler")
 		if r.Method != http.MethodPatch {
+			slog.Warn("Method not allowed", "method", r.Method)
 			writeJSONError(w, http.StatusMethodNotAllowed, "Only PATCH allowed")
 			return
 		}
@@ -276,18 +303,23 @@ func NewEmailDelayHandler(db *sql.DB) http.HandlerFunc {
 // NewReminderSettingsHandler — GET/POST: global user reminder delay settings.
 func NewReminderSettingsHandler(db *sql.DB) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		slog.Info("Executing NewReminderSettingsHandler")
 		session := SessionFromContext(r.Context())
 		if session == nil {
+			slog.Warn("Unauthorized access attempt")
 			writeJSONError(w, http.StatusUnauthorized, "Not authenticated")
 			return
 		}
 		switch r.Method {
 		case http.MethodGet:
+			slog.Debug("Handling GET reminder settings request")
 			s, err := repository.GetReminderSettings(r.Context(), db, session.Email)
 			if err != nil {
+				slog.Error("Failed to load reminder settings", "error", err)
 				writeJSONError(w, http.StatusInternalServerError, "Failed to load reminder settings")
 				return
 			}
+			slog.Info("Successfully loaded reminder settings")
 			w.Header().Set("Content-Type", "application/json")
 			json.NewEncoder(w).Encode(s)
 		case http.MethodPost:
@@ -312,8 +344,10 @@ func NewReminderSettingsHandler(db *sql.DB) http.HandlerFunc {
 // NewPendingCountHandler — GET: returns badge count of pending reminder drafts.
 func NewPendingCountHandler(db *sql.DB) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		slog.Info("Executing NewPendingCountHandler")
 		session := SessionFromContext(r.Context())
 		if session == nil {
+			slog.Warn("Unauthorized access attempt")
 			writeJSONError(w, http.StatusUnauthorized, "Not authenticated")
 			return
 		}
@@ -343,7 +377,9 @@ func createReminderMimeMessage(sender, to, subject, body, inReplyToMessageID str
 // GenerateReminderDraftsHandler — POST: trigger on-demand Gemini draft generation for overdue emails.
 func NewGenerateReminderDraftsHandler(cfg *config.Config, db *sql.DB) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		slog.Info("Executing NewGenerateReminderDraftsHandler")
 		if r.Method != http.MethodPost {
+			slog.Warn("Method not allowed", "method", r.Method)
 			writeJSONError(w, http.StatusMethodNotAllowed, "Only POST allowed")
 			return
 		}

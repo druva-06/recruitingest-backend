@@ -39,18 +39,21 @@ func writeJSONError(w http.ResponseWriter, status int, msg string) {
 // NewUploadHandler returns the http.HandlerFunc with dependencies injected.
 func NewUploadHandler(cfg *config.Config, db *sql.DB) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		slog.Debug("Executing NewUploadHandler")
 		// Only allow POST
 		if r.Method != http.MethodPost {
 			writeJSONError(w, http.StatusMethodNotAllowed, "Only POST method is allowed")
 			return
 		}
 
+		slog.Debug("Extracting session from context")
 		session := SessionFromContext(r.Context())
 		if session == nil {
 			writeJSONError(w, http.StatusUnauthorized, "Not authenticated")
 			return
 		}
 
+		slog.Debug("Validating request body size limits")
 		// 1. Memory limits (Max 20MB)
 		r.Body = http.MaxBytesReader(w, r.Body, maxUploadSize)
 		if err := r.ParseMultipartForm(maxUploadSize); err != nil {
@@ -58,6 +61,7 @@ func NewUploadHandler(cfg *config.Config, db *sql.DB) http.HandlerFunc {
 			return
 		}
 
+		slog.Debug("Retrieving 'file' from multipart form")
 		// 2. Retrieve 'file' from form-data
 		file, header, err := r.FormFile("file")
 		if err != nil {
@@ -66,6 +70,7 @@ func NewUploadHandler(cfg *config.Config, db *sql.DB) http.HandlerFunc {
 		}
 		defer file.Close()
 
+		slog.Debug("Validating file content type and extension", "filename", header.Filename)
 		// 3. Validate content type & extension
 		contentType := header.Header.Get("Content-Type")
 		ext := strings.ToLower(filepath.Ext(header.Filename))
@@ -74,6 +79,7 @@ func NewUploadHandler(cfg *config.Config, db *sql.DB) http.HandlerFunc {
 			return
 		}
 
+		slog.Debug("Setting up local storage for upload")
 		// 4. Generate unique filename and setup local storage
 		uploadDir := "/tmp/recruitingest/uploads"
 		if err := os.MkdirAll(uploadDir, 0755); err != nil {
@@ -86,6 +92,7 @@ func NewUploadHandler(cfg *config.Config, db *sql.DB) http.HandlerFunc {
 		safeFilename := fmt.Sprintf("%d_%s", timestamp, header.Filename)
 		destPath := filepath.Join(uploadDir, safeFilename)
 
+		slog.Debug("Creating destination file", "path", destPath)
 		destFile, err := os.Create(destPath)
 		if err != nil {
 			slog.Error("Failed to create destination file", "error", err)
@@ -94,23 +101,28 @@ func NewUploadHandler(cfg *config.Config, db *sql.DB) http.HandlerFunc {
 		}
 		defer destFile.Close()
 
+		slog.Debug("Writing file payload to disk")
 		if _, err := io.Copy(destFile, file); err != nil {
 			slog.Error("Failed to write file payload", "error", err)
 			writeJSONError(w, http.StatusInternalServerError, "Internal server error")
 			return
 		}
 
+		slog.Debug("Building AI job payload")
 		payloadBytes, _ := json.Marshal(map[string]string{
 			"file_path": destPath,
 			"file_name": header.Filename,
 		})
 
+		slog.Debug("Queuing 'parse_resume' background AI job")
 		jobID, err := repository.CreateAIJob(r.Context(), db, session.Email, "parse_resume", payloadBytes)
 		if err != nil {
 			slog.Error("Failed to create AI job record", "error", err)
 			writeJSONError(w, http.StatusInternalServerError, "Internal server error while creating job tracker")
 			return
 		}
+
+		slog.Info("Successfully enqueued upload for parsing", "job_id", jobID)
 
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusAccepted)
