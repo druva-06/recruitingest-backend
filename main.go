@@ -41,6 +41,9 @@ func main() {
 	defer db.Close()
 	slog.Info("Successfully connected to MySQL.")
 
+	// Auto-migrate to add referral_prompt column
+	_, _ = db.Exec("ALTER TABLE user_prompts ADD COLUMN referral_prompt TEXT")
+
 	// 3. Start background session purge goroutine (runs every hour).
 	go func() {
 		ticker := time.NewTicker(time.Hour)

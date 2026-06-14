@@ -165,6 +165,7 @@ func handleGeneratePitch(ctx context.Context, db *sql.DB, cfg *config.Config, jo
 		Location       string `json:"location"`
 		LinkedinUrl    string `json:"linkedin_url"`
 		UserName       string `json:"user_name"`
+		PitchType      string `json:"pitch_type"`
 	}
 	if err := json.Unmarshal(job.Payload, &payload); err != nil {
 		return nil, fmt.Errorf("invalid payload: %w", err)
@@ -179,9 +180,15 @@ func handleGeneratePitch(ctx context.Context, db *sql.DB, cfg *config.Config, jo
 	}
 
 	var customPrompt string
-	err = db.QueryRowContext(ctx, "SELECT custom_prompt FROM user_prompts WHERE email = ?", job.UserEmail).Scan(&customPrompt)
+	var referralPrompt sql.NullString
+	err = db.QueryRowContext(ctx, "SELECT custom_prompt, referral_prompt FROM user_prompts WHERE email = ?", job.UserEmail).Scan(&customPrompt, &referralPrompt)
 	if err != nil && err != sql.ErrNoRows {
 		slog.Warn("Failed to query custom prompt from database", "error", err)
+	}
+
+	activePrompt := customPrompt
+	if payload.PitchType == "referral" {
+		activePrompt = referralPrompt.String
 	}
 
 	geminiSvc, err := llm.NewGeminiService(ctx, apiKey, modelName)
@@ -192,7 +199,7 @@ func handleGeneratePitch(ctx context.Context, db *sql.DB, cfg *config.Config, jo
 
 	subject, body, err := geminiSvc.GenerateEmailContent(
 		ctx, modelName,
-		payload.JobDescription, payload.CompanyName, payload.RecruiterName, payload.UserName, job.UserEmail, resume.ResumeText, resume.DriveLink, customPrompt,
+		payload.JobDescription, payload.CompanyName, payload.RecruiterName, payload.UserName, job.UserEmail, resume.ResumeText, resume.DriveLink, activePrompt, payload.PitchType,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("pitch generation failed: %w", err)

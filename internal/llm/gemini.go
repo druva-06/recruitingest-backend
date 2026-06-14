@@ -141,8 +141,35 @@ Google Drive Resume Link: {{drive_link}}
 4. Keep the email concise and call-to-action focused (encouraging a reply).
 5. Output ONLY the raw JSON object. Do not include markdown code block wrappers (like triple backticks) or any conversational text outside the JSON.`
 
+// DefaultReferralPromptTemplate is the default prompt for referral requests.
+const DefaultReferralPromptTemplate = `You are a professional outreach assistant. Write a personalized cold outreach email from a job applicant to a contact asking for a referral.
+
+The output MUST be a valid JSON object matching this schema:
+{
+  "subject": "Email subject line",
+  "body": "Email body in HTML"
+}
+
+[INPUT DETAILS]
+Contact Name: {{recruiter_name}}
+Company Name: {{company_name}}
+Job Description:
+{{job_description}}
+Applicant Name: {{applicant_name}}
+Applicant Email: {{applicant_email}}
+Resume Raw Content:
+{{resume_content}}
+Google Drive Resume Link: {{drive_link}}
+
+[INSTRUCTIONS]
+1. Write a professional subject line.
+2. In the body (HTML format using <p>, <strong>, <ul>, <li>, and <a>), politely ask for a referral for the provided job role. Highlight 2-3 specific skills/projects from the Resume Raw Content that match the Job Description. Use <strong> to highlight key metrics or tech.
+3. Make sure to use the Google Drive Resume Link in a clean anchor tag '<a href="{{drive_link}}" style="color: #176b4a; font-weight: bold; text-decoration: underline;">view my complete resume on Google Drive</a>' in the body.
+4. Keep the email concise and polite.
+5. Output ONLY the raw JSON object. Do not include markdown code block wrappers (like triple backticks) or any conversational text outside the JSON.`
+
 // GenerateEmailContent uses Gemini to generate a personalized email outreach.
-func (s *GeminiService) GenerateEmailContent(ctx context.Context, modelName, jobDesc, companyName, recruiterName, userName, userEmail, resumeText, driveLink, customPrompt string) (string, string, error) {
+func (s *GeminiService) GenerateEmailContent(ctx context.Context, modelName, jobDesc, companyName, recruiterName, userName, userEmail, resumeText, driveLink, customPrompt, pitchType string) (string, string, error) {
 	model := s.client.GenerativeModel(modelName)
 	model.ResponseMIMEType = "application/json"
 	model.ResponseSchema = &genai.Schema{
@@ -156,7 +183,11 @@ func (s *GeminiService) GenerateEmailContent(ctx context.Context, modelName, job
 
 	template := customPrompt
 	if template == "" {
-		template = DefaultPromptTemplate
+		if pitchType == "referral" {
+			template = DefaultReferralPromptTemplate
+		} else {
+			template = DefaultPromptTemplate
+		}
 	}
 
 	// Apply template replacements
