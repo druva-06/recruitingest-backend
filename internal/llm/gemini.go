@@ -120,6 +120,8 @@ The output MUST be a valid JSON object matching this schema:
 [INPUT DETAILS]
 Recruiter Name: {{recruiter_name}}
 Company Name: {{company_name}}
+Job Title: {{job_title}}
+Job URL: {{job_url}}
 Job Description:
 {{job_description}}
 Applicant Name: {{applicant_name}}
@@ -153,6 +155,8 @@ The output MUST be a valid JSON object matching this schema:
 [INPUT DETAILS]
 Contact Name: {{recruiter_name}}
 Company Name: {{company_name}}
+Job Title: {{job_title}}
+Job URL: {{job_url}}
 Job Description:
 {{job_description}}
 Applicant Name: {{applicant_name}}
@@ -168,8 +172,59 @@ Google Drive Resume Link: {{drive_link}}
 4. Keep the email concise and polite.
 5. Output ONLY the raw JSON object. Do not include markdown code block wrappers (like triple backticks) or any conversational text outside the JSON.`
 
+// ExtractJobDetails extracts the job title and URL from the pasted job description.
+func (s *GeminiService) ExtractJobDetails(ctx context.Context, modelName, jobDesc string) (string, string, error) {
+	model := s.client.GenerativeModel(modelName)
+	model.ResponseMIMEType = "application/json"
+	model.ResponseSchema = &genai.Schema{
+		Type: genai.TypeObject,
+		Properties: map[string]*genai.Schema{
+			"job_title": {Type: genai.TypeString},
+			"job_url":   {Type: genai.TypeString},
+		},
+	}
+	model.SystemInstruction = genai.NewUserContent(genai.Text("Extract the Job Title and Job URL from the provided job description text. If not found, return empty strings."))
+
+	callCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+
+	resp, err := model.GenerateContent(callCtx, genai.Text(jobDesc))
+	if err != nil {
+		return "", "", fmt.Errorf("extraction failed: %w", err)
+	}
+
+	if len(resp.Candidates) == 0 || len(resp.Candidates[0].Content.Parts) == 0 {
+		return "", "", nil
+	}
+
+	part := resp.Candidates[0].Content.Parts[0]
+	txt, ok := part.(genai.Text)
+	if !ok {
+		return "", "", nil
+	}
+
+	var res struct {
+		JobTitle string `json:"job_title"`
+		JobUrl   string `json:"job_url"`
+	}
+	
+	cleanTxt := strings.TrimSpace(string(txt))
+	if strings.HasPrefix(cleanTxt, "```json") {
+		cleanTxt = strings.TrimPrefix(cleanTxt, "```json")
+		cleanTxt = strings.TrimSuffix(cleanTxt, "```")
+		cleanTxt = strings.TrimSpace(cleanTxt)
+	}
+
+	if err := json.Unmarshal([]byte(cleanTxt), &res); err != nil {
+		slog.Error("Failed to unmarshal job details", "error", err, "raw_text", txt)
+		return "", "", nil
+	}
+	slog.Info("Extracted job details", "title", res.JobTitle, "url", res.JobUrl)
+	return res.JobTitle, res.JobUrl, nil
+}
+
 // GenerateEmailContent uses Gemini to generate a personalized email outreach.
-func (s *GeminiService) GenerateEmailContent(ctx context.Context, modelName, jobDesc, companyName, recruiterName, userName, userEmail, resumeText, driveLink, customPrompt, pitchType string) (string, string, error) {
+func (s *GeminiService) GenerateEmailContent(ctx context.Context, modelName, jobDesc, jobTitle, jobUrl, companyName, recruiterName, userName, userEmail, resumeText, driveLink, customPrompt, pitchType string) (string, string, error) {
 	model := s.client.GenerativeModel(modelName)
 	model.ResponseMIMEType = "application/json"
 	model.ResponseSchema = &genai.Schema{
@@ -181,19 +236,47 @@ func (s *GeminiService) GenerateEmailContent(ctx context.Context, modelName, job
 		Required: []string{"subject", "body"},
 	}
 
-	template := customPrompt
-	if template == "" {
+	var finalPrompt string
+	if customPrompt == "" {
 		if pitchType == "referral" {
-			template = DefaultReferralPromptTemplate
+			finalPrompt = DefaultReferralPromptTemplate
 		} else {
-			template = DefaultPromptTemplate
+			finalPrompt = DefaultPromptTemplate
 		}
+	} else {
+		finalPrompt = fmt.Sprintf(`[SYSTEM INSTRUCTIONS / USER CUSTOM PROMPT]
+%s
+
+[INPUT DETAILS - CONTEXT FOR EMAIL]
+Recruiter Name: %s
+Company Name: %s
+Job Title: %s
+Job URL: %s
+Job Description:
+%s
+
+Applicant Name: %s
+Applicant Email: %s
+Resume Raw Content:
+%s
+Google Drive Resume Link: %s
+
+[OUTPUT FORMAT INSTRUCTION]
+The output MUST be a valid JSON object matching this schema:
+{
+  "subject": "Email subject line",
+  "body": "Email body in HTML"
+}
+Output ONLY the raw JSON object. Do not include markdown code block wrappers.`, customPrompt, recruiterName, companyName, jobTitle, jobUrl, jobDesc, userName, userEmail, resumeText, driveLink)
 	}
 
-	// Apply template replacements
+	// Apply template replacements in case the custom prompt includes tags
 	replacements := map[string]string{
 		"{{recruiter_name}}":  recruiterName,
+		"{{contact_name}}":    recruiterName,
 		"{{company_name}}":    companyName,
+		"{{job_title}}":       jobTitle,
+		"{{job_url}}":         jobUrl,
 		"{{job_description}}": jobDesc,
 		"{{applicant_name}}":  userName,
 		"{{applicant_email}}": userEmail,
@@ -201,15 +284,13 @@ func (s *GeminiService) GenerateEmailContent(ctx context.Context, modelName, job
 		"{{drive_link}}":      driveLink,
 	}
 
-	prompt := template
 	for k, v := range replacements {
-		prompt = strings.ReplaceAll(prompt, k, v)
+		finalPrompt = strings.ReplaceAll(finalPrompt, k, v)
 	}
 
 	callCtx, cancel := context.WithTimeout(ctx, 45*time.Second)
 	defer cancel()
-
-	resp, err := model.GenerateContent(callCtx, genai.Text(prompt))
+	resp, err := model.GenerateContent(callCtx, genai.Text(finalPrompt))
 	if err != nil {
 		return "", "", fmt.Errorf("failed to generate email content: %w", err)
 	}
@@ -229,7 +310,14 @@ func (s *GeminiService) GenerateEmailContent(ctx context.Context, modelName, job
 		Body    string `json:"body"`
 	}
 
-	if err := json.Unmarshal([]byte(txt), &emailResult); err != nil {
+	cleanTxt := strings.TrimSpace(string(txt))
+	if strings.HasPrefix(cleanTxt, "```json") {
+		cleanTxt = strings.TrimPrefix(cleanTxt, "```json")
+		cleanTxt = strings.TrimSuffix(cleanTxt, "```")
+		cleanTxt = strings.TrimSpace(cleanTxt)
+	}
+
+	if err := json.Unmarshal([]byte(cleanTxt), &emailResult); err != nil {
 		return "", "", fmt.Errorf("failed to parse email JSON: %w\nPayload: %s", err, txt)
 	}
 
@@ -303,6 +391,67 @@ Instructions:
 	}
 	if err := json.Unmarshal([]byte(txt), &result); err != nil {
 		return "", "", fmt.Errorf("failed to parse follow-up JSON: %w\nPayload: %s", err, txt)
+	}
+	return result.Subject, result.Body, nil
+}
+
+// EnhanceEmailContent takes an existing draft and an enhancement instruction and uses Gemini to refine it.
+func (s *GeminiService) EnhanceEmailContent(
+	ctx context.Context,
+	modelName string,
+	currentSubject, currentBody, instruction string,
+) (string, string, error) {
+	model := s.client.GenerativeModel(modelName)
+	model.ResponseMIMEType = "application/json"
+	model.ResponseSchema = &genai.Schema{
+		Type: genai.TypeObject,
+		Properties: map[string]*genai.Schema{
+			"subject": {Type: genai.TypeString},
+			"body":    {Type: genai.TypeString},
+		},
+		Required: []string{"subject", "body"},
+	}
+
+	prompt := fmt.Sprintf(`You are an elite copywriter and technical editor. Your task is to enhance an existing email draft based on specific user instructions.
+
+Original Email Subject: %s
+Original Email Body (HTML):
+%s
+
+USER ENHANCEMENT INSTRUCTION:
+"%s"
+
+You must rewrite the subject and/or body to satisfy the user's enhancement instruction. 
+Ensure the output remains in valid HTML format (using <p> tags for paragraphs) and maintains any important links or placeholders. Do not add markdown code blocks. Output only the JSON.`, currentSubject, currentBody, instruction)
+
+	callCtx, cancel := context.WithTimeout(ctx, 45*time.Second)
+	defer cancel()
+
+	resp, err := model.GenerateContent(callCtx, genai.Text(prompt))
+	if err != nil {
+		return "", "", fmt.Errorf("EnhanceEmailContent failed: %w", err)
+	}
+	if len(resp.Candidates) == 0 || len(resp.Candidates[0].Content.Parts) == 0 {
+		return "", "", fmt.Errorf("no content returned from LLM for enhancement")
+	}
+	txt, ok := resp.Candidates[0].Content.Parts[0].(genai.Text)
+	if !ok {
+		return "", "", fmt.Errorf("unexpected response part type for enhancement")
+	}
+
+	cleanTxt := strings.TrimSpace(string(txt))
+	if strings.HasPrefix(cleanTxt, "```json") {
+		cleanTxt = strings.TrimPrefix(cleanTxt, "```json")
+		cleanTxt = strings.TrimSuffix(cleanTxt, "```")
+		cleanTxt = strings.TrimSpace(cleanTxt)
+	}
+
+	var result struct {
+		Subject string `json:"subject"`
+		Body    string `json:"body"`
+	}
+	if err := json.Unmarshal([]byte(cleanTxt), &result); err != nil {
+		return "", "", fmt.Errorf("failed to parse enhanced JSON: %w\nPayload: %s", err, txt)
 	}
 	return result.Subject, result.Body, nil
 }

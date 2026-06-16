@@ -94,6 +94,7 @@ func main() {
 	mux.Handle("GET /api/v1/outreach/prompt", auth(http.HandlerFunc(api.NewPromptSettingsHandler(db))))
 	mux.Handle("POST /api/v1/outreach/prompt", auth(http.HandlerFunc(api.NewPromptSettingsHandler(db))))
 	mux.Handle("GET /api/v1/outreach/sent-emails", auth(http.HandlerFunc(api.NewSentEmailsHandler(db))))
+	mux.Handle("POST /api/v1/outreach/enhance-pitch", auth(http.HandlerFunc(api.NewEnhancePitchHandler(cfg, db))))
 
 	// Email status & delay override routes
 	mux.Handle("PATCH /api/v1/outreach/emails/{id}/status", auth(http.HandlerFunc(api.NewEmailStatusHandler(db))))

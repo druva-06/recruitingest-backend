@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/druva-06/recruitingest-backend/config"
+	"github.com/druva-06/recruitingest-backend/internal/llm"
 	"github.com/druva-06/recruitingest-backend/internal/models"
 	"github.com/druva-06/recruitingest-backend/internal/repository"
 	"golang.org/x/oauth2"
@@ -346,6 +347,71 @@ func NewSentEmailsHandler(db *sql.DB) http.HandlerFunc {
 		json.NewEncoder(w).Encode(map[string]interface{}{
 			"emails": emails,
 			"user":   session.Email,
+		})
+	}
+}
+
+// NewEnhancePitchHandler refines an existing pitch draft using AI.
+func NewEnhancePitchHandler(cfg *config.Config, db *sql.DB) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			writeJSONError(w, http.StatusMethodNotAllowed, "Only POST method is allowed")
+			return
+		}
+
+		session := SessionFromContext(r.Context())
+		if session == nil {
+			writeJSONError(w, http.StatusUnauthorized, "Not authenticated")
+			return
+		}
+
+		var req struct {
+			Subject     string `json:"subject"`
+			Body        string `json:"body"`
+			Instruction string `json:"instruction"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			writeJSONError(w, http.StatusBadRequest, "Invalid request body")
+			return
+		}
+
+		if req.Instruction == "" {
+			writeJSONError(w, http.StatusBadRequest, "Enhancement instruction is required")
+			return
+		}
+
+		settings, err := repository.GetUserAISettings(r.Context(), db, session.Email)
+		var apiKey, modelName string
+		if err == nil && settings != nil {
+			apiKey = settings.GeminiAPIKey
+			modelName = settings.GeminiModel
+		}
+		if apiKey == "" {
+			apiKey = cfg.GeminiAPIKey
+		}
+		if modelName == "" {
+			modelName = cfg.GeminiModel
+		}
+
+		geminiSvc, err := llm.NewGeminiService(r.Context(), apiKey, modelName)
+		if err != nil {
+			slog.Error("AI service unavailable", "error", err)
+			writeJSONError(w, http.StatusInternalServerError, "AI service unavailable")
+			return
+		}
+		defer geminiSvc.Close()
+
+		newSubj, newBody, err := geminiSvc.EnhanceEmailContent(r.Context(), modelName, req.Subject, req.Body, req.Instruction)
+		if err != nil {
+			slog.Error("Failed to enhance email", "error", err)
+			writeJSONError(w, http.StatusInternalServerError, "Failed to enhance email draft")
+			return
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"subject": newSubj,
+			"body":    newBody,
 		})
 	}
 }

@@ -197,9 +197,12 @@ func handleGeneratePitch(ctx context.Context, db *sql.DB, cfg *config.Config, jo
 	}
 	defer geminiSvc.Close()
 
+	var jobTitle, jobUrl string
+	jobTitle, jobUrl, _ = geminiSvc.ExtractJobDetails(ctx, modelName, payload.JobDescription)
+
 	subject, body, err := geminiSvc.GenerateEmailContent(
 		ctx, modelName,
-		payload.JobDescription, payload.CompanyName, payload.RecruiterName, payload.UserName, job.UserEmail, resume.ResumeText, resume.DriveLink, activePrompt, payload.PitchType,
+		payload.JobDescription, jobTitle, jobUrl, payload.CompanyName, payload.RecruiterName, payload.UserName, job.UserEmail, resume.ResumeText, resume.DriveLink, activePrompt, payload.PitchType,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("pitch generation failed: %w", err)
