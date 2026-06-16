@@ -252,12 +252,24 @@ func NewConfirmPitchHandler(cfg *config.Config, db *sql.DB) http.HandlerFunc {
 			return
 		}
 
-		// Apply defaults for reminder delays
-		if req.Reminder1DelayDays <= 0 {
-			req.Reminder1DelayDays = 5
-		}
-		if req.Reminder2DelayDays <= 0 {
-			req.Reminder2DelayDays = 10
+		// Apply defaults from user settings if not provided
+		if req.Reminder1DelayDays <= 0 || req.Reminder2DelayDays <= 0 {
+			rs, err := repository.GetReminderSettings(r.Context(), db, session.Email)
+			if err == nil && rs != nil {
+				if req.Reminder1DelayDays <= 0 {
+					req.Reminder1DelayDays = rs.Reminder1DelayDays
+				}
+				if req.Reminder2DelayDays <= 0 {
+					req.Reminder2DelayDays = rs.Reminder2DelayDays
+				}
+			} else {
+				if req.Reminder1DelayDays <= 0 {
+					req.Reminder1DelayDays = 5
+				}
+				if req.Reminder2DelayDays <= 0 {
+					req.Reminder2DelayDays = 10
+				}
+			}
 		}
 
 		gmailClient, err := getGmailClient(r.Context(), db, cfg, session)
