@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"strconv"
 
 	"github.com/druva-06/recruitingest-backend/internal/repository"
 )
@@ -48,7 +49,7 @@ func NewCreateJobPostingHandler(db *sql.DB) http.HandlerFunc {
 	}
 }
 
-// NewGetJobPostingsHandler fetches all active job postings for the dropdown
+// NewGetJobPostingsHandler fetches job postings for the dropdown, with optional search and limit
 func NewGetJobPostingsHandler(db *sql.DB) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet {
@@ -57,7 +58,16 @@ func NewGetJobPostingsHandler(db *sql.DB) http.HandlerFunc {
 		}
 		session := SessionFromContext(r.Context())
 
-		postings, err := repository.GetJobPostings(r.Context(), db, session.Email)
+		query := r.URL.Query().Get("q")
+		limitStr := r.URL.Query().Get("limit")
+		limit := 0
+		if limitStr != "" {
+			if l, err := strconv.Atoi(limitStr); err == nil {
+				limit = l
+			}
+		}
+
+		postings, err := repository.GetJobPostings(r.Context(), db, session.Email, query, limit)
 		if err != nil {
 			slog.Error("Failed to get job postings", "error", err)
 			writeJSONError(w, http.StatusInternalServerError, "Failed to retrieve job postings")
@@ -71,7 +81,7 @@ func NewGetJobPostingsHandler(db *sql.DB) http.HandlerFunc {
 	}
 }
 
-// NewLogLinkedInOutreachHandler logs a profile to a job
+// NewLogLinkedInOutreachHandler logs a LinkedIn profile against a job posting
 func NewLogLinkedInOutreachHandler(db *sql.DB) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
@@ -107,13 +117,14 @@ func NewLogLinkedInOutreachHandler(db *sql.DB) http.HandlerFunc {
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(map[string]interface{}{
 			"referral_request_id": requestID,
-			"status":              "Pending",
+			"status":              "Logged",
 		})
 	}
 }
 
-// NewBatchUpdateReferralHandler handles updating profiles from connections page
-func NewBatchUpdateReferralHandler(db *sql.DB) http.HandlerFunc {
+// NewBatchUpdateConnectionStatusHandler marks visible LinkedIn connections as Connected
+// Called from the connections page to sync who has accepted connection requests
+func NewBatchUpdateConnectionStatusHandler(db *sql.DB) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPatch {
 			writeJSONError(w, http.StatusMethodNotAllowed, "Only PATCH is allowed")
@@ -129,9 +140,9 @@ func NewBatchUpdateReferralHandler(db *sql.DB) http.HandlerFunc {
 			return
 		}
 
-		affected, err := repository.BatchUpdateReferralStatusByURL(r.Context(), db, session.Email, req.LinkedInURLs, "Pending", "Accepted")
+		affected, err := repository.UpdateProfileConnectionStatus(r.Context(), db, session.Email, req.LinkedInURLs, "Connected")
 		if err != nil {
-			slog.Error("Failed to batch update statuses", "error", err)
+			slog.Error("Failed to batch update connection statuses", "error", err)
 			writeJSONError(w, http.StatusInternalServerError, "Failed to batch update")
 			return
 		}
@@ -143,7 +154,8 @@ func NewBatchUpdateReferralHandler(db *sql.DB) http.HandlerFunc {
 	}
 }
 
-// NewUpdateReferralStatusHandler handles updating a specific request
+// NewUpdateReferralStatusHandler updates the workflow status of a specific referral request
+// Valid statuses: Logged, Messaged, Referred, Follow-Up
 func NewUpdateReferralStatusHandler(db *sql.DB) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPatch {
@@ -163,6 +175,13 @@ func NewUpdateReferralStatusHandler(db *sql.DB) http.HandlerFunc {
 
 		if req.ReferralRequestID == 0 || req.Status == "" {
 			writeJSONError(w, http.StatusBadRequest, "Referral request ID and status are required")
+			return
+		}
+
+		// Validate status values
+		validStatuses := map[string]bool{"Logged": true, "Messaged": true, "Referred": true, "Follow-Up": true}
+		if !validStatuses[req.Status] {
+			writeJSONError(w, http.StatusBadRequest, "Invalid status. Valid values: Logged, Messaged, Referred, Follow-Up")
 			return
 		}
 
@@ -210,7 +229,7 @@ func NewDeleteReferralHandler(db *sql.DB) http.HandlerFunc {
 			writeJSONError(w, http.StatusMethodNotAllowed, "Only DELETE is allowed")
 			return
 		}
-		
+
 		idStr := r.PathValue("id")
 		if idStr == "" {
 			writeJSONError(w, http.StatusBadRequest, "Missing referral ID")

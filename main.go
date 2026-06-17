@@ -69,12 +69,25 @@ func main() {
 		user_email VARCHAR(255) NOT NULL,
 		linkedin_profile_id INT NOT NULL,
 		job_posting_id INT NOT NULL,
-		status VARCHAR(50) NOT NULL DEFAULT 'Pending',
+		status VARCHAR(50) NOT NULL DEFAULT 'Logged',
 		created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
 		updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
 		FOREIGN KEY (linkedin_profile_id) REFERENCES linkedin_profiles(id) ON DELETE CASCADE,
 		FOREIGN KEY (job_posting_id) REFERENCES job_postings(id) ON DELETE CASCADE
 	)`)
+
+	// Add connection_status to linkedin_profiles (tracks LinkedIn connection state)
+	_, _ = db.Exec("ALTER TABLE linkedin_profiles ADD COLUMN connection_status VARCHAR(50) NOT NULL DEFAULT 'Pending'")
+
+	// Data migration: move old referral_requests 'Pending'/'Accepted' statuses to new scheme
+	// Old 'Pending' → new 'Logged' (connection not yet accepted)
+	_, _ = db.Exec("UPDATE referral_requests SET status = 'Logged' WHERE status = 'Pending'")
+	// Old 'Accepted' → mark profile as Connected + referral as Logged
+	_, _ = db.Exec(`UPDATE linkedin_profiles lp
+		INNER JOIN referral_requests rr ON rr.linkedin_profile_id = lp.id
+		SET lp.connection_status = 'Connected'
+		WHERE rr.status = 'Accepted'`)
+	_, _ = db.Exec("UPDATE referral_requests SET status = 'Logged' WHERE status = 'Accepted'")
 
 	// 3. Start background session purge goroutine (runs every hour).
 	go func() {
@@ -150,7 +163,7 @@ func main() {
 	mux.Handle("POST /api/v1/crm/jobs", auth(http.HandlerFunc(api.NewCreateJobPostingHandler(db))))
 	mux.Handle("GET /api/v1/crm/jobs", auth(http.HandlerFunc(api.NewGetJobPostingsHandler(db))))
 	mux.Handle("POST /api/v1/crm/outreach", auth(http.HandlerFunc(api.NewLogLinkedInOutreachHandler(db))))
-	mux.Handle("PATCH /api/v1/crm/outreach/batch", auth(http.HandlerFunc(api.NewBatchUpdateReferralHandler(db))))
+	mux.Handle("PATCH /api/v1/crm/outreach/batch", auth(http.HandlerFunc(api.NewBatchUpdateConnectionStatusHandler(db))))
 	mux.Handle("PATCH /api/v1/crm/outreach/status", auth(http.HandlerFunc(api.NewUpdateReferralStatusHandler(db))))
 	mux.Handle("DELETE /api/v1/crm/outreach/{id}", auth(http.HandlerFunc(api.NewDeleteReferralHandler(db))))
 	mux.Handle("GET /api/v1/crm/dashboard", auth(http.HandlerFunc(api.NewGetDashboardReferralsHandler(db))))

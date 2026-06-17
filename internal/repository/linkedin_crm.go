@@ -21,9 +21,25 @@ func CreateJobPosting(ctx context.Context, db *sql.DB, userEmail, companyName, r
 	return int(id), nil
 }
 
-// GetJobPostings retrieves all job postings for a user
-func GetJobPostings(ctx context.Context, db *sql.DB, userEmail string) ([]models.JobPosting, error) {
-	rows, err := db.QueryContext(ctx, "SELECT id, user_email, company_name, role_title, COALESCE(job_url, '') as job_url, created_at FROM job_postings WHERE user_email = ? ORDER BY created_at DESC", userEmail)
+// GetJobPostings retrieves all job postings for a user, optionally filtered and limited
+func GetJobPostings(ctx context.Context, db *sql.DB, userEmail, searchQuery string, limit int) ([]models.JobPosting, error) {
+	sqlQuery := "SELECT id, user_email, company_name, role_title, COALESCE(job_url, '') as job_url, created_at FROM job_postings WHERE user_email = ?"
+	args := []interface{}{userEmail}
+
+	if searchQuery != "" {
+		sqlQuery += " AND (company_name LIKE ? OR role_title LIKE ?)"
+		likeQuery := "%" + searchQuery + "%"
+		args = append(args, likeQuery, likeQuery)
+	}
+
+	sqlQuery += " ORDER BY created_at DESC"
+
+	if limit > 0 {
+		sqlQuery += " LIMIT ?"
+		args = append(args, limit)
+	}
+
+	rows, err := db.QueryContext(ctx, sqlQuery, args...)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get job postings: %w", err)
 	}
@@ -40,22 +56,23 @@ func GetJobPostings(ctx context.Context, db *sql.DB, userEmail string) ([]models
 	return postings, nil
 }
 
-// LogOutreach records a new outreach attempt
+// LogOutreach records a new outreach attempt for a LinkedIn profile against a job posting
 func LogOutreach(ctx context.Context, db *sql.DB, userEmail string, jobPostingID int, linkedinURL, profileName, currentCompany, currentRole string) (int, error) {
-	// Start transaction
 	tx, err := db.BeginTx(ctx, nil)
 	if err != nil {
 		return 0, fmt.Errorf("failed to begin transaction: %w", err)
 	}
 	defer tx.Rollback()
 
-	// 1. Ensure profile exists or update it
+	// 1. Ensure the LinkedIn profile exists; create or update it
 	var profileID int
 	err = tx.QueryRowContext(ctx, "SELECT id FROM linkedin_profiles WHERE user_email = ? AND linkedin_url = ?", userEmail, linkedinURL).Scan(&profileID)
 	if err != nil {
 		if err == sql.ErrNoRows {
-			// Create profile
-			res, err := tx.ExecContext(ctx, "INSERT INTO linkedin_profiles (user_email, linkedin_url, profile_name, current_company, current_role) VALUES (?, ?, ?, ?, ?)", userEmail, linkedinURL, profileName, currentCompany, currentRole)
+			// Create new profile with connection_status = 'Pending'
+			res, err := tx.ExecContext(ctx,
+				"INSERT INTO linkedin_profiles (user_email, linkedin_url, profile_name, current_company, current_role, connection_status) VALUES (?, ?, ?, ?, ?, 'Pending')",
+				userEmail, linkedinURL, profileName, currentCompany, currentRole)
 			if err != nil {
 				return 0, fmt.Errorf("failed to create profile: %w", err)
 			}
@@ -65,18 +82,24 @@ func LogOutreach(ctx context.Context, db *sql.DB, userEmail string, jobPostingID
 			return 0, fmt.Errorf("failed to check profile: %w", err)
 		}
 	} else {
-		// Update existing profile's current details if they've changed
-		_, err = tx.ExecContext(ctx, "UPDATE linkedin_profiles SET profile_name = ?, current_company = ?, current_role = ? WHERE id = ?", profileName, currentCompany, currentRole, profileID)
+		// Update profile details (name/company/role may have changed)
+		_, err = tx.ExecContext(ctx,
+			"UPDATE linkedin_profiles SET profile_name = ?, current_company = ?, current_role = ? WHERE id = ?",
+			profileName, currentCompany, currentRole, profileID)
 		if err != nil {
 			return 0, fmt.Errorf("failed to update profile: %w", err)
 		}
 	}
 
-	// 2. Insert or Get Referral Request
+	// 2. Insert a new referral request or retrieve the existing one
 	var requestID int
-	err = tx.QueryRowContext(ctx, "SELECT id FROM referral_requests WHERE user_email = ? AND linkedin_profile_id = ? AND job_posting_id = ?", userEmail, profileID, jobPostingID).Scan(&requestID)
+	err = tx.QueryRowContext(ctx,
+		"SELECT id FROM referral_requests WHERE user_email = ? AND linkedin_profile_id = ? AND job_posting_id = ?",
+		userEmail, profileID, jobPostingID).Scan(&requestID)
 	if err == sql.ErrNoRows {
-		res, err := tx.ExecContext(ctx, "INSERT INTO referral_requests (user_email, linkedin_profile_id, job_posting_id, status) VALUES (?, ?, ?, 'Pending')", userEmail, profileID, jobPostingID)
+		res, err := tx.ExecContext(ctx,
+			"INSERT INTO referral_requests (user_email, linkedin_profile_id, job_posting_id, status) VALUES (?, ?, ?, 'Logged')",
+			userEmail, profileID, jobPostingID)
 		if err != nil {
 			return 0, fmt.Errorf("failed to insert referral request: %w", err)
 		}
@@ -96,7 +119,8 @@ func LogOutreach(ctx context.Context, db *sql.DB, userEmail string, jobPostingID
 	return requestID, nil
 }
 
-// UpdateReferralStatus updates the status of a specific referral request
+// UpdateReferralStatus updates the workflow status of a specific referral request
+// Valid statuses: Logged, Messaged, Referred, Follow-Up
 func UpdateReferralStatus(ctx context.Context, db *sql.DB, requestID int, userEmail, status string) error {
 	_, err := db.ExecContext(ctx, "UPDATE referral_requests SET status = ? WHERE id = ? AND user_email = ?", status, requestID, userEmail)
 	if err != nil {
@@ -105,16 +129,16 @@ func UpdateReferralStatus(ctx context.Context, db *sql.DB, requestID int, userEm
 	return nil
 }
 
-// BatchUpdateReferralStatusByURL updates multiple profiles statuses simultaneously for a user
-func BatchUpdateReferralStatusByURL(ctx context.Context, db *sql.DB, userEmail string, urls []string, oldStatus, newStatus string) (int, error) {
+// UpdateProfileConnectionStatus updates the connection_status of linkedin_profiles for a given user
+// Valid statuses: Pending, Connected
+func UpdateProfileConnectionStatus(ctx context.Context, db *sql.DB, userEmail string, urls []string, newStatus string) (int, error) {
 	if len(urls) == 0 {
 		return 0, nil
 	}
 
-	// Dynamic IN clause building
-	args := []interface{}{newStatus, userEmail, oldStatus}
-	query := "UPDATE referral_requests r JOIN linkedin_profiles p ON r.linkedin_profile_id = p.id SET r.status = ? WHERE r.user_email = ? AND r.status = ? AND p.linkedin_url IN ("
-	
+	// Build dynamic IN clause
+	args := []interface{}{newStatus, userEmail}
+	query := "UPDATE linkedin_profiles SET connection_status = ? WHERE user_email = ? AND linkedin_url IN ("
 	for i, url := range urls {
 		query += "?"
 		args = append(args, url)
@@ -126,13 +150,13 @@ func BatchUpdateReferralStatusByURL(ctx context.Context, db *sql.DB, userEmail s
 
 	res, err := db.ExecContext(ctx, query, args...)
 	if err != nil {
-		return 0, fmt.Errorf("failed to batch update status: %w", err)
+		return 0, fmt.Errorf("failed to batch update connection status: %w", err)
 	}
 	affected, err := res.RowsAffected()
 	return int(affected), err
 }
 
-// GetDashboardReferrals retrieves the grouped dashboard data
+// GetDashboardReferrals retrieves all referrals grouped by job posting for the dashboard
 func GetDashboardReferrals(ctx context.Context, db *sql.DB, userEmail string) ([]models.DashboardReferral, error) {
 	query := `
 		SELECT 
@@ -146,6 +170,7 @@ func GetDashboardReferrals(ctx context.Context, db *sql.DB, userEmail string) ([
 			COALESCE(p.profile_name, '') as profile_name,
 			COALESCE(p.current_company, '') as current_company,
 			COALESCE(p.current_role, '') as current_role,
+			COALESCE(p.connection_status, 'Pending') as connection_status,
 			COALESCE(r.status, '') as status,
 			COALESCE(r.updated_at, j.created_at) as updated_at,
 			j.created_at as job_created_at
@@ -164,7 +189,11 @@ func GetDashboardReferrals(ctx context.Context, db *sql.DB, userEmail string) ([
 	var results []models.DashboardReferral
 	for rows.Next() {
 		var r models.DashboardReferral
-		if err := rows.Scan(&r.ReferralID, &r.JobPostingID, &r.CompanyName, &r.RoleTitle, &r.JobURL, &r.ProfileID, &r.LinkedInURL, &r.ProfileName, &r.CurrentCompany, &r.CurrentRole, &r.Status, &r.UpdatedAt, &r.JobCreatedAt); err != nil {
+		if err := rows.Scan(
+			&r.ReferralID, &r.JobPostingID, &r.CompanyName, &r.RoleTitle, &r.JobURL,
+			&r.ProfileID, &r.LinkedInURL, &r.ProfileName, &r.CurrentCompany, &r.CurrentRole,
+			&r.ConnectionStatus, &r.Status, &r.UpdatedAt, &r.JobCreatedAt,
+		); err != nil {
 			return nil, err
 		}
 		results = append(results, r)
@@ -172,18 +201,18 @@ func GetDashboardReferrals(ctx context.Context, db *sql.DB, userEmail string) ([
 	return results, nil
 }
 
-// DeleteReferralRequest deletes a specific referral request
+// DeleteReferralRequest deletes a specific referral request owned by the user
 func DeleteReferralRequest(ctx context.Context, db *sql.DB, requestID int, userEmail string) error {
 	res, err := db.ExecContext(ctx, "DELETE FROM referral_requests WHERE id = ? AND user_email = ?", requestID, userEmail)
 	if err != nil {
 		return fmt.Errorf("failed to delete referral request: %w", err)
 	}
-	
+
 	affected, err := res.RowsAffected()
 	if err != nil {
 		return err
 	}
-	
+
 	if affected == 0 {
 		return fmt.Errorf("referral request not found or not owned by user")
 	}
