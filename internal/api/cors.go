@@ -6,10 +6,12 @@ import "net/http"
 func WithCORS(next http.Handler, allowedOrigin string) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		origin := r.Header.Get("Origin")
-		if origin == allowedOrigin {
-			w.Header().Set("Access-Control-Allow-Origin", allowedOrigin)
+		isChromeExtension := len(origin) > 19 && origin[:19] == "chrome-extension://"
+		
+		if origin == allowedOrigin || isChromeExtension {
+			w.Header().Set("Access-Control-Allow-Origin", origin)
 			w.Header().Set("Access-Control-Allow-Credentials", "true")
-			w.Header().Set("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+			w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PATCH, OPTIONS, DELETE")
 			w.Header().Set("Access-Control-Allow-Headers",
 				"Content-Type, X-Gemini-API-Key, X-Gemini-Model, X-Rate-Limit-Requests, X-Rate-Limit-Interval, Cookie")
 			w.Header().Set("Vary", "Origin")

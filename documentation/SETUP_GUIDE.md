@@ -113,6 +113,38 @@ Before starting the application, you must create the database and the table sche
        reminder2_delay_days INT NOT NULL DEFAULT 10,
        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
    );
+
+   -- Target Jobs (The actual roles you are applying for)
+   CREATE TABLE IF NOT EXISTS job_postings (
+       id INT AUTO_INCREMENT PRIMARY KEY,
+       user_email VARCHAR(255) NOT NULL,
+       company_name VARCHAR(255) NOT NULL,
+       role_title VARCHAR(255) NOT NULL,
+       created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+   );
+
+   -- LinkedIn Profiles (The people - exists only once per user)
+   CREATE TABLE IF NOT EXISTS linkedin_profiles (
+       id INT AUTO_INCREMENT PRIMARY KEY,
+       user_email VARCHAR(255) NOT NULL,
+       linkedin_url VARCHAR(255) NOT NULL,
+       profile_name VARCHAR(255),
+       created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+       UNIQUE KEY unique_user_profile (user_email, linkedin_url)
+   );
+
+   -- Referral Requests (The interaction linking a Person to a Job)
+   CREATE TABLE IF NOT EXISTS referral_requests (
+       id INT AUTO_INCREMENT PRIMARY KEY,
+       user_email VARCHAR(255) NOT NULL,
+       linkedin_profile_id INT NOT NULL,
+       job_posting_id INT NOT NULL,
+       status VARCHAR(50) NOT NULL DEFAULT 'Pending',
+       created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+       updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+       FOREIGN KEY (linkedin_profile_id) REFERENCES linkedin_profiles(id) ON DELETE CASCADE,
+       FOREIGN KEY (job_posting_id) REFERENCES job_postings(id) ON DELETE CASCADE
+   );
    ```
 
 ---

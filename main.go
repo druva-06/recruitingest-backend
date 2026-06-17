@@ -44,6 +44,38 @@ func main() {
 	// Auto-migrate to add referral_prompt column
 	_, _ = db.Exec("ALTER TABLE user_prompts ADD COLUMN referral_prompt TEXT")
 
+	// Auto-migrate new CRM tables
+	_, _ = db.Exec(`CREATE TABLE IF NOT EXISTS job_postings (
+		id INT AUTO_INCREMENT PRIMARY KEY,
+		user_email VARCHAR(255) NOT NULL,
+		company_name VARCHAR(255) NOT NULL,
+		role_title VARCHAR(255) NOT NULL,
+		created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+	)`)
+	// Auto-migrate to add job_url if it doesn't exist
+	_, _ = db.Exec("ALTER TABLE job_postings ADD COLUMN job_url TEXT")
+	_, _ = db.Exec(`CREATE TABLE IF NOT EXISTS linkedin_profiles (
+		id INT AUTO_INCREMENT PRIMARY KEY,
+		user_email VARCHAR(255) NOT NULL,
+		linkedin_url VARCHAR(255) NOT NULL,
+		profile_name VARCHAR(255) NOT NULL,
+		created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+		UNIQUE KEY unique_user_profile (user_email, linkedin_url)
+	)`)
+	_, _ = db.Exec("ALTER TABLE linkedin_profiles ADD COLUMN current_company TEXT")
+	_, _ = db.Exec("ALTER TABLE linkedin_profiles ADD COLUMN current_role TEXT")
+	_, _ = db.Exec(`CREATE TABLE IF NOT EXISTS referral_requests (
+		id INT AUTO_INCREMENT PRIMARY KEY,
+		user_email VARCHAR(255) NOT NULL,
+		linkedin_profile_id INT NOT NULL,
+		job_posting_id INT NOT NULL,
+		status VARCHAR(50) NOT NULL DEFAULT 'Pending',
+		created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+		updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+		FOREIGN KEY (linkedin_profile_id) REFERENCES linkedin_profiles(id) ON DELETE CASCADE,
+		FOREIGN KEY (job_posting_id) REFERENCES job_postings(id) ON DELETE CASCADE
+	)`)
+
 	// 3. Start background session purge goroutine (runs every hour).
 	go func() {
 		ticker := time.NewTicker(time.Hour)
@@ -113,6 +145,15 @@ func main() {
 	// Settings routes
 	mux.Handle("GET /api/v1/settings/ai", auth(http.HandlerFunc(api.NewAISettingsHandler(db))))
 	mux.Handle("POST /api/v1/settings/ai", auth(http.HandlerFunc(api.NewAISettingsHandler(db))))
+
+	// LinkedIn CRM routes
+	mux.Handle("POST /api/v1/crm/jobs", auth(http.HandlerFunc(api.NewCreateJobPostingHandler(db))))
+	mux.Handle("GET /api/v1/crm/jobs", auth(http.HandlerFunc(api.NewGetJobPostingsHandler(db))))
+	mux.Handle("POST /api/v1/crm/outreach", auth(http.HandlerFunc(api.NewLogLinkedInOutreachHandler(db))))
+	mux.Handle("PATCH /api/v1/crm/outreach/batch", auth(http.HandlerFunc(api.NewBatchUpdateReferralHandler(db))))
+	mux.Handle("PATCH /api/v1/crm/outreach/status", auth(http.HandlerFunc(api.NewUpdateReferralStatusHandler(db))))
+	mux.Handle("DELETE /api/v1/crm/outreach/{id}", auth(http.HandlerFunc(api.NewDeleteReferralHandler(db))))
+	mux.Handle("GET /api/v1/crm/dashboard", auth(http.HandlerFunc(api.NewGetDashboardReferralsHandler(db))))
 
 	// 6. Start Server
 	slog.Info("Server listening", "port", cfg.ServerPort)
