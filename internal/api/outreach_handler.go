@@ -506,13 +506,15 @@ func NewPromptSettingsHandler(db *sql.DB) http.HandlerFunc {
 func getCustomPrompt(w http.ResponseWriter, r *http.Request, db *sql.DB, email string) {
 	var customPrompt string
 	var referralPrompt sql.NullString
-	err := db.QueryRowContext(r.Context(), "SELECT custom_prompt, referral_prompt FROM user_prompts WHERE email = ?", email).Scan(&customPrompt, &referralPrompt)
+	var linkedinPrompt sql.NullString
+	err := db.QueryRowContext(r.Context(), "SELECT custom_prompt, referral_prompt, linkedin_outreach_prompt FROM user_prompts WHERE email = ?", email).Scan(&customPrompt, &referralPrompt, &linkedinPrompt)
 	if err == sql.ErrNoRows {
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(map[string]string{
-			"email":           email,
-			"custom_prompt":   "",
-			"referral_prompt": "",
+			"email":                    email,
+			"custom_prompt":            "",
+			"referral_prompt":          "",
+			"linkedin_outreach_prompt": "",
 		})
 		return
 	}
@@ -524,16 +526,18 @@ func getCustomPrompt(w http.ResponseWriter, r *http.Request, db *sql.DB, email s
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]string{
-		"email":           email,
-		"custom_prompt":   customPrompt,
-		"referral_prompt": referralPrompt.String,
+		"email":                    email,
+		"custom_prompt":            customPrompt,
+		"referral_prompt":          referralPrompt.String,
+		"linkedin_outreach_prompt": linkedinPrompt.String,
 	})
 }
 
 func saveCustomPrompt(w http.ResponseWriter, r *http.Request, db *sql.DB, email string) {
 	var req struct {
-		CustomPrompt   string `json:"custom_prompt"`
-		ReferralPrompt string `json:"referral_prompt"`
+		CustomPrompt           string `json:"custom_prompt"`
+		ReferralPrompt         string `json:"referral_prompt"`
+		LinkedinOutreachPrompt string `json:"linkedin_outreach_prompt"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeJSONError(w, http.StatusBadRequest, "Invalid request body")
@@ -542,13 +546,14 @@ func saveCustomPrompt(w http.ResponseWriter, r *http.Request, db *sql.DB, email 
 
 	prompt := strings.TrimSpace(req.CustomPrompt)
 	refPrompt := strings.TrimSpace(req.ReferralPrompt)
+	linkedinPrompt := strings.TrimSpace(req.LinkedinOutreachPrompt)
 
 	const q = `
-		INSERT INTO user_prompts (email, custom_prompt, referral_prompt)
-		VALUES (?, ?, ?)
-		ON DUPLICATE KEY UPDATE custom_prompt = VALUES(custom_prompt), referral_prompt = VALUES(referral_prompt)
+		INSERT INTO user_prompts (email, custom_prompt, referral_prompt, linkedin_outreach_prompt)
+		VALUES (?, ?, ?, ?)
+		ON DUPLICATE KEY UPDATE custom_prompt = VALUES(custom_prompt), referral_prompt = VALUES(referral_prompt), linkedin_outreach_prompt = VALUES(linkedin_outreach_prompt)
 	`
-	_, err := db.ExecContext(r.Context(), q, email, prompt, refPrompt)
+	_, err := db.ExecContext(r.Context(), q, email, prompt, refPrompt, linkedinPrompt)
 	if err != nil {
 		slog.Error("Failed to save custom prompt", "error", err)
 		writeJSONError(w, http.StatusInternalServerError, "Failed to save custom prompt")
@@ -557,8 +562,9 @@ func saveCustomPrompt(w http.ResponseWriter, r *http.Request, db *sql.DB, email 
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]string{
-		"status":          "success",
-		"custom_prompt":   prompt,
-		"referral_prompt": refPrompt,
+		"status":                   "success",
+		"custom_prompt":            prompt,
+		"referral_prompt":          refPrompt,
+		"linkedin_outreach_prompt": linkedinPrompt,
 	})
 }

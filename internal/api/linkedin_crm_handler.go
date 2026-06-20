@@ -329,3 +329,34 @@ func NewDeleteReferralHandler(db *sql.DB) http.HandlerFunc {
 		})
 	}
 }
+// NewGetMessageTemplateHandler returns the user's linkedin_outreach_prompt and drive_link
+func NewGetMessageTemplateHandler(db *sql.DB) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			writeJSONError(w, http.StatusMethodNotAllowed, "Only GET is allowed")
+			return
+		}
+		session := SessionFromContext(r.Context())
+
+		// Get linkedin_outreach_prompt
+		var linkedinPrompt sql.NullString
+		err := db.QueryRowContext(r.Context(), "SELECT linkedin_outreach_prompt FROM user_prompts WHERE email = ?", session.Email).Scan(&linkedinPrompt)
+		if err != nil && err != sql.ErrNoRows {
+			slog.Error("Failed to fetch linkedin outreach prompt", "error", err)
+		}
+
+		// Get drive_link
+		var driveLink string
+		resume, err := repository.GetUserResume(r.Context(), db, session.Email)
+		if err == nil && resume != nil {
+			driveLink = resume.DriveLink
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"success":                  true,
+			"linkedin_outreach_prompt": linkedinPrompt.String,
+			"drive_link":               driveLink,
+		})
+	}
+}

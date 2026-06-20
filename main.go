@@ -41,8 +41,9 @@ func main() {
 	defer db.Close()
 	slog.Info("Successfully connected to MySQL.")
 
-	// Auto-migrate to add referral_prompt column
+	// Auto-migrate to add referral_prompt and linkedin_outreach_prompt columns
 	_, _ = db.Exec("ALTER TABLE user_prompts ADD COLUMN referral_prompt TEXT")
+	_, _ = db.Exec("ALTER TABLE user_prompts ADD COLUMN linkedin_outreach_prompt TEXT")
 
 	// Auto-migrate new CRM tables
 	_, _ = db.Exec(`CREATE TABLE IF NOT EXISTS job_postings (
@@ -169,6 +170,7 @@ func main() {
 	mux.Handle("PATCH /api/v1/crm/outreach/status", auth(http.HandlerFunc(api.NewUpdateReferralStatusHandler(db))))
 	mux.Handle("DELETE /api/v1/crm/outreach/{id}", auth(http.HandlerFunc(api.NewDeleteReferralHandler(db))))
 	mux.Handle("GET /api/v1/crm/dashboard", auth(http.HandlerFunc(api.NewGetDashboardReferralsHandler(db))))
+	mux.Handle("GET /api/v1/crm/message-template", auth(http.HandlerFunc(api.NewGetMessageTemplateHandler(db))))
 
 	// 6. Start Server
 	slog.Info("Server listening", "port", cfg.ServerPort)
