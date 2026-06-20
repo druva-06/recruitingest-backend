@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"strings"
 
 	"github.com/druva-06/recruitingest-backend/internal/models"
 )
@@ -217,4 +218,66 @@ func DeleteReferralRequest(ctx context.Context, db *sql.DB, requestID int, userE
 		return fmt.Errorf("referral request not found or not owned by user")
 	}
 	return nil
+}
+
+// normalizeLinkedInURL strips query params and trailing slashes for consistent comparison
+func normalizeLinkedInURL(rawURL string) string {
+	// Strip query params
+	if idx := strings.Index(rawURL, "?"); idx != -1 {
+		rawURL = rawURL[:idx]
+	}
+	// Strip trailing slash
+	return strings.TrimRight(rawURL, "/")
+}
+
+// GetProfileReferralsByURL fetches all referral_requests for a given LinkedIn profile URL.
+// It normalizes both the input URL and the stored URL (strip query params + trailing slash)
+// so minor URL format differences don't cause missed matches.
+func GetProfileReferralsByURL(ctx context.Context, db *sql.DB, userEmail, linkedInURL string) ([]models.DashboardReferral, error) {
+	cleanURL := normalizeLinkedInURL(linkedInURL)
+
+	// We fetch all profiles whose stored URL normalizes to the same value.
+	// TRIM(TRAILING '/' FROM ...) and SUBSTRING_INDEX handle this in MySQL.
+	query := `
+		SELECT
+			r.id as referral_id,
+			j.id as job_posting_id,
+			j.company_name,
+			j.role_title,
+			COALESCE(j.job_url, '') as job_url,
+			p.id as profile_id,
+			p.linkedin_url,
+			COALESCE(p.profile_name, '') as profile_name,
+			COALESCE(p.current_company, '') as current_company,
+			COALESCE(p.current_role, '') as current_role,
+			COALESCE(p.connection_status, 'Pending') as connection_status,
+			r.status,
+			COALESCE(r.updated_at, r.created_at) as updated_at,
+			j.created_at as job_created_at
+		FROM referral_requests r
+		JOIN linkedin_profiles p ON r.linkedin_profile_id = p.id
+		JOIN job_postings j ON r.job_posting_id = j.id
+		WHERE r.user_email = ?
+		AND TRIM(TRAILING '/' FROM SUBSTRING_INDEX(p.linkedin_url, '?', 1)) = ?
+		ORDER BY r.updated_at DESC
+	`
+	rows, err := db.QueryContext(ctx, query, userEmail, cleanURL)
+	if err != nil {
+		return nil, fmt.Errorf("failed to query profile referrals: %w", err)
+	}
+	defer rows.Close()
+
+	var results []models.DashboardReferral
+	for rows.Next() {
+		var r models.DashboardReferral
+		if err := rows.Scan(
+			&r.ReferralID, &r.JobPostingID, &r.CompanyName, &r.RoleTitle, &r.JobURL,
+			&r.ProfileID, &r.LinkedInURL, &r.ProfileName, &r.CurrentCompany, &r.CurrentRole,
+			&r.ConnectionStatus, &r.Status, &r.UpdatedAt, &r.JobCreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		results = append(results, r)
+	}
+	return results, nil
 }

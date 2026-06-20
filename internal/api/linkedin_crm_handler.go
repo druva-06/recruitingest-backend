@@ -81,6 +81,37 @@ func NewGetJobPostingsHandler(db *sql.DB) http.HandlerFunc {
 	}
 }
 
+// NewGetProfileReferralsHandler fetches all referrals for a specific LinkedIn profile URL.
+// Query param: ?url=<linkedin_profile_url>
+// This is used by the extension to check if a profile already exists in the CRM.
+func NewGetProfileReferralsHandler(db *sql.DB) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			writeJSONError(w, http.StatusMethodNotAllowed, "Only GET is allowed")
+			return
+		}
+		session := SessionFromContext(r.Context())
+
+		profileURL := r.URL.Query().Get("url")
+		if profileURL == "" {
+			writeJSONError(w, http.StatusBadRequest, "url parameter is required")
+			return
+		}
+
+		referrals, err := repository.GetProfileReferralsByURL(r.Context(), db, session.Email, profileURL)
+		if err != nil {
+			slog.Error("Failed to get profile referrals", "error", err)
+			writeJSONError(w, http.StatusInternalServerError, "Failed to fetch profile referrals")
+			return
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"referrals": referrals,
+		})
+	}
+}
+
 // NewLogLinkedInOutreachHandler logs a LinkedIn profile against a job posting
 func NewLogLinkedInOutreachHandler(db *sql.DB) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {

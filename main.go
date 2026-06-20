@@ -162,6 +162,7 @@ func main() {
 	// LinkedIn CRM routes
 	mux.Handle("POST /api/v1/crm/jobs", auth(http.HandlerFunc(api.NewCreateJobPostingHandler(db))))
 	mux.Handle("GET /api/v1/crm/jobs", auth(http.HandlerFunc(api.NewGetJobPostingsHandler(db))))
+	mux.Handle("GET /api/v1/crm/profile-referrals", auth(http.HandlerFunc(api.NewGetProfileReferralsHandler(db))))
 	mux.Handle("POST /api/v1/crm/outreach", auth(http.HandlerFunc(api.NewLogLinkedInOutreachHandler(db))))
 	mux.Handle("PATCH /api/v1/crm/outreach/batch", auth(http.HandlerFunc(api.NewBatchUpdateConnectionStatusHandler(db))))
 	mux.Handle("PATCH /api/v1/crm/outreach/status", auth(http.HandlerFunc(api.NewUpdateReferralStatusHandler(db))))
