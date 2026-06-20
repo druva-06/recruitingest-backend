@@ -112,6 +112,48 @@ func NewGetProfileReferralsHandler(db *sql.DB) http.HandlerFunc {
 	}
 }
 
+// NewUpdateProfileConnectionStatusHandler updates a single profile's connection_status.
+// Body: { "profile_id": int, "status": "Connected" }
+// Called from the extension when the user clicks "Mark Connected" on a pipeline card.
+func NewUpdateProfileConnectionStatusHandler(db *sql.DB) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPatch {
+			writeJSONError(w, http.StatusMethodNotAllowed, "Only PATCH is allowed")
+			return
+		}
+		session := SessionFromContext(r.Context())
+
+		var req struct {
+			ProfileID int    `json:"profile_id"`
+			Status    string `json:"status"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			writeJSONError(w, http.StatusBadRequest, "Invalid request body")
+			return
+		}
+		if req.ProfileID == 0 {
+			writeJSONError(w, http.StatusBadRequest, "profile_id is required")
+			return
+		}
+		if req.Status != "Connected" && req.Status != "Pending" {
+			writeJSONError(w, http.StatusBadRequest, "status must be 'Connected' or 'Pending'")
+			return
+		}
+
+		if err := repository.UpdateSingleProfileConnectionStatus(r.Context(), db, req.ProfileID, session.Email, req.Status); err != nil {
+			slog.Error("Failed to update profile connection status", "error", err)
+			writeJSONError(w, http.StatusInternalServerError, "Failed to update connection status")
+			return
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"success": true,
+			"status":  req.Status,
+		})
+	}
+}
+
 // NewLogLinkedInOutreachHandler logs a LinkedIn profile against a job posting
 func NewLogLinkedInOutreachHandler(db *sql.DB) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {

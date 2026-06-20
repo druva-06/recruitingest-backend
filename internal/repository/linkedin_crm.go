@@ -157,6 +157,29 @@ func UpdateProfileConnectionStatus(ctx context.Context, db *sql.DB, userEmail st
 	return int(affected), err
 }
 
+// UpdateSingleProfileConnectionStatus updates the connection_status of one linkedin_profile by ID.
+// Only updates profiles that belong to the calling user (via any referral_request they own).
+func UpdateSingleProfileConnectionStatus(ctx context.Context, db *sql.DB, profileID int, userEmail, newStatus string) error {
+	// Verify the user owns a referral for this profile before updating
+	res, err := db.ExecContext(ctx, `
+		UPDATE linkedin_profiles p
+		INNER JOIN referral_requests r ON r.linkedin_profile_id = p.id AND r.user_email = ?
+		SET p.connection_status = ?
+		WHERE p.id = ?
+	`, userEmail, newStatus, profileID)
+	if err != nil {
+		return fmt.Errorf("failed to update profile connection status: %w", err)
+	}
+	affected, err := res.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if affected == 0 {
+		return fmt.Errorf("profile not found or not owned by user")
+	}
+	return nil
+}
+
 // GetDashboardReferrals retrieves all referrals grouped by job posting for the dashboard
 func GetDashboardReferrals(ctx context.Context, db *sql.DB, userEmail string) ([]models.DashboardReferral, error) {
 	query := `
