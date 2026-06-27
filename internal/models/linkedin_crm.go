@@ -7,6 +7,7 @@ type JobPosting struct {
 	RoleTitle   string `json:"role_title"`
 	JobURL      string `json:"job_url"`
 	CreatedAt   string `json:"created_at"`
+	HasReferral bool   `json:"has_referral"`
 }
 
 type LinkedInProfile struct {
@@ -46,4 +47,5 @@ type DashboardReferral struct {
 	Status           string `json:"status"`            // Logged, Messaged, Referred, Follow-Up
 	UpdatedAt        string `json:"updated_at"`
 	JobCreatedAt     string `json:"job_created_at"`
+	JobHasReferral   bool   `json:"job_has_referral"`
 }

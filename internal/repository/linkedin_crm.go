@@ -24,7 +24,13 @@ func CreateJobPosting(ctx context.Context, db *sql.DB, userEmail, companyName, r
 
 // GetJobPostings retrieves all job postings for a user, optionally filtered and limited
 func GetJobPostings(ctx context.Context, db *sql.DB, userEmail, searchQuery string, limit int) ([]models.JobPosting, error) {
-	sqlQuery := "SELECT id, user_email, company_name, role_title, COALESCE(job_url, '') as job_url, created_at FROM job_postings WHERE user_email = ?"
+	sqlQuery := `
+		SELECT 
+			j.id, j.user_email, j.company_name, j.role_title, COALESCE(j.job_url, '') as job_url, j.created_at,
+			EXISTS(SELECT 1 FROM referral_requests r WHERE r.job_posting_id = j.id AND r.status = 'Referred') as has_referral
+		FROM job_postings j 
+		WHERE j.user_email = ?
+	`
 	args := []interface{}{userEmail}
 
 	if searchQuery != "" {
@@ -49,7 +55,7 @@ func GetJobPostings(ctx context.Context, db *sql.DB, userEmail, searchQuery stri
 	var postings []models.JobPosting
 	for rows.Next() {
 		var p models.JobPosting
-		if err := rows.Scan(&p.ID, &p.UserEmail, &p.CompanyName, &p.RoleTitle, &p.JobURL, &p.CreatedAt); err != nil {
+		if err := rows.Scan(&p.ID, &p.UserEmail, &p.CompanyName, &p.RoleTitle, &p.JobURL, &p.CreatedAt, &p.HasReferral); err != nil {
 			return nil, err
 		}
 		postings = append(postings, p)
@@ -276,7 +282,8 @@ func GetProfileReferralsByURL(ctx context.Context, db *sql.DB, userEmail, linked
 			COALESCE(p.connection_status, 'Pending') as connection_status,
 			r.status,
 			COALESCE(r.updated_at, r.created_at) as updated_at,
-			j.created_at as job_created_at
+			j.created_at as job_created_at,
+			EXISTS(SELECT 1 FROM referral_requests r2 WHERE r2.job_posting_id = j.id AND r2.status = 'Referred') as job_has_referral
 		FROM referral_requests r
 		JOIN linkedin_profiles p ON r.linkedin_profile_id = p.id
 		JOIN job_postings j ON r.job_posting_id = j.id
@@ -296,7 +303,7 @@ func GetProfileReferralsByURL(ctx context.Context, db *sql.DB, userEmail, linked
 		if err := rows.Scan(
 			&r.ReferralID, &r.JobPostingID, &r.CompanyName, &r.RoleTitle, &r.JobURL,
 			&r.ProfileID, &r.LinkedInURL, &r.ProfileName, &r.CurrentCompany, &r.CurrentRole,
-			&r.ConnectionStatus, &r.Status, &r.UpdatedAt, &r.JobCreatedAt,
+			&r.ConnectionStatus, &r.Status, &r.UpdatedAt, &r.JobCreatedAt, &r.JobHasReferral,
 		); err != nil {
 			return nil, err
 		}
