@@ -10,6 +10,7 @@ import (
 
 	"github.com/druva-06/recruitingest-backend/config"
 	"github.com/druva-06/recruitingest-backend/internal/api"
+	"github.com/druva-06/recruitingest-backend/internal/jobscout"
 	"github.com/druva-06/recruitingest-backend/internal/repository"
 	"github.com/druva-06/recruitingest-backend/internal/worker"
 	_ "github.com/go-sql-driver/mysql"
@@ -77,6 +78,64 @@ func main() {
 		FOREIGN KEY (job_posting_id) REFERENCES job_postings(id) ON DELETE CASCADE
 	)`)
 
+	_, _ = db.Exec(`CREATE TABLE IF NOT EXISTS job_scout_config (
+		id INT AUTO_INCREMENT PRIMARY KEY,
+		user_email VARCHAR(255) UNIQUE NOT NULL,
+		apify_api_key TEXT,
+		apify_actor_id VARCHAR(255) DEFAULT 'curious_coder/linkedin-jobs-scraper',
+		gemini_api_key TEXT,
+		gemini_model VARCHAR(255) DEFAULT 'gemini-2.5-flash',
+		default_scrape_limit INT DEFAULT 25,
+		scrape_company BOOLEAN DEFAULT TRUE,
+		score_rate_mode VARCHAR(50) DEFAULT 'per_minute',
+		score_rate_value INT DEFAULT 5,
+		score_interval_seconds INT DEFAULT 60,
+		top_n_results INT DEFAULT 15,
+		created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+		updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+	)`)
+	_, _ = db.Exec("ALTER TABLE job_scout_config ADD COLUMN user_skills_experience TEXT")
+	_, _ = db.Exec("ALTER TABLE job_scout_config ADD COLUMN scoring_prompt TEXT")
+	_, _ = db.Exec("ALTER TABLE job_scout_config ADD COLUMN default_linkedin_url TEXT")
+	_, _ = db.Exec(`CREATE TABLE IF NOT EXISTS job_scout_runs (
+		id INT AUTO_INCREMENT PRIMARY KEY,
+		user_email VARCHAR(255) NOT NULL,
+		apify_run_id VARCHAR(255) NULL,
+		linkedin_url TEXT NOT NULL,
+		scrape_limit INT NOT NULL,
+		status VARCHAR(50) DEFAULT 'pending',
+		total_scraped INT DEFAULT 0,
+		total_scored INT DEFAULT 0,
+		error_message TEXT NULL,
+		created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+		started_at DATETIME NULL,
+		finished_at DATETIME NULL
+	)`)
+	_, _ = db.Exec(`CREATE TABLE IF NOT EXISTS job_scout_jobs (
+		id INT AUTO_INCREMENT PRIMARY KEY,
+		run_id INT NOT NULL,
+		user_email VARCHAR(255) NOT NULL,
+		title VARCHAR(500) NOT NULL,
+		company VARCHAR(500) NOT NULL,
+		location VARCHAR(500) NOT NULL,
+		description TEXT NOT NULL,
+		linkedin_url TEXT NOT NULL,
+		salary VARCHAR(255) NULL,
+		job_type VARCHAR(100) NULL,
+		experience_level VARCHAR(100) NULL,
+		posted_at VARCHAR(255) NULL,
+		applicant_count VARCHAR(100) NULL,
+		company_url TEXT NULL,
+		company_logo TEXT NULL,
+		score_status VARCHAR(50) DEFAULT 'pending',
+		fit_score DECIMAL(5,2) NULL,
+		fit_reasoning TEXT NULL,
+		matching_skills TEXT NULL,
+		missing_skills TEXT NULL,
+		scored_at DATETIME NULL,
+		created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+	)`)
+
 	// Add connection_status to linkedin_profiles (tracks LinkedIn connection state)
 	_, _ = db.Exec("ALTER TABLE linkedin_profiles ADD COLUMN connection_status VARCHAR(50) NOT NULL DEFAULT 'Pending'")
 
@@ -111,6 +170,11 @@ func main() {
 	// Start AI Queue Worker
 	worker.StartAIQueueWorker(db, cfg)
 	slog.Info("Started background AI queue worker")
+
+	// Job Scout workers (isolated from existing workers)
+	jobscout.StartScraperWorker(db)
+	jobscout.StartScoringWorker(db)
+	slog.Info("Started Job Scout scraper and scoring workers")
 
 	// 5. Setup HTTP Infrastructure
 	mux := http.NewServeMux()
@@ -171,6 +235,15 @@ func main() {
 	mux.Handle("DELETE /api/v1/crm/outreach/{id}", auth(http.HandlerFunc(api.NewDeleteReferralHandler(db))))
 	mux.Handle("GET /api/v1/crm/dashboard", auth(http.HandlerFunc(api.NewGetDashboardReferralsHandler(db))))
 	mux.Handle("GET /api/v1/crm/message-template", auth(http.HandlerFunc(api.NewGetMessageTemplateHandler(db))))
+
+	// Job Scout routes (completely isolated feature)
+	mux.Handle("GET /api/v1/job-scout/config", auth(http.HandlerFunc(api.NewJobScoutConfigHandler(db))))
+	mux.Handle("PUT /api/v1/job-scout/config", auth(http.HandlerFunc(api.NewJobScoutConfigHandler(db))))
+	mux.Handle("POST /api/v1/job-scout/start", auth(http.HandlerFunc(api.NewJobScoutStartHandler(db))))
+	mux.Handle("GET /api/v1/job-scout/runs", auth(http.HandlerFunc(api.NewJobScoutRunsHandler(db))))
+	mux.Handle("GET /api/v1/job-scout/runs/{id}", auth(http.HandlerFunc(api.NewJobScoutRunDetailHandler(db))))
+	mux.Handle("DELETE /api/v1/job-scout/runs/{id}", auth(http.HandlerFunc(api.NewJobScoutDeleteRunHandler(db))))
+	mux.Handle("POST /api/v1/job-scout/runs/{id}/rescore", auth(http.HandlerFunc(api.NewJobScoutRescoreHandler(db))))
 
 	// 6. Start Server
 	slog.Info("Server listening", "port", cfg.ServerPort)

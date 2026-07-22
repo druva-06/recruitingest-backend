@@ -36,6 +36,12 @@ func writeJSONError(w http.ResponseWriter, status int, msg string) {
 	json.NewEncoder(w).Encode(ErrorResponse{Error: msg})
 }
 
+func writeJSON(w http.ResponseWriter, status int, data interface{}) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(status)
+	json.NewEncoder(w).Encode(data)
+}
+
 // NewUploadHandler returns the http.HandlerFunc with dependencies injected.
 func NewUploadHandler(cfg *config.Config, db *sql.DB) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
